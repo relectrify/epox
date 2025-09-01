@@ -1,14 +1,14 @@
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::{cell::RefCell, io::Error, marker::PhantomData, pin::Pin, rc::Rc, task::Poll};
 
-use crate::executor::EXECUTOR;
-use crate::executor::EpollWaker;
-use crate::map_libc_error;
+use crate::executor::{EXECUTOR, EpollWaker};
+use crate::{map_libc_fd, map_libc_result};
 
 /*
  * Timer
  */
 pub struct Timer {
-    fd: libc::c_int,
+    fd: OwnedFd,
     ew: Pin<Rc<RefCell<EpollWaker>>>,
     _not_send_not_sync: PhantomData<*mut ()>,
 }
@@ -16,7 +16,7 @@ pub struct Timer {
 impl Timer {
     pub fn new() -> Result<Self, Error> {
         /* safety: we check return value before using it */
-        let fd = map_libc_error(unsafe {
+        let fd = map_libc_fd(unsafe {
             libc::timerfd_create(
                 libc::CLOCK_MONOTONIC,
                 libc::TFD_NONBLOCK | libc::TFD_CLOEXEC,
@@ -27,7 +27,7 @@ impl Timer {
             ew: Rc::pin(RefCell::new(EpollWaker::default())),
             _not_send_not_sync: PhantomData,
         };
-        EXECUTOR.with(|e| e.epoll_add(fd, libc::EPOLLIN, s.ew.clone()))?;
+        EXECUTOR.with(|e| e.epoll_add(&s.fd, libc::EPOLLIN, s.ew.clone()))?;
         Ok(s)
     }
 
@@ -47,8 +47,8 @@ impl Timer {
             it_value: duration_to_timespec(initial),
         };
         /* safety: we check the return value */
-        map_libc_error(unsafe {
-            libc::timerfd_settime(self.fd, 0, &new_value, std::ptr::null_mut())
+        map_libc_result(unsafe {
+            libc::timerfd_settime(self.fd.as_raw_fd(), 0, &new_value, std::ptr::null_mut())
         })?;
         Ok(())
     }
@@ -56,7 +56,7 @@ impl Timer {
 
 impl Drop for Timer {
     fn drop(&mut self) {
-        EXECUTOR.with(|e| e.epoll_del(self.fd)).unwrap();
+        EXECUTOR.with(|e| e.epoll_del(&self.fd)).unwrap();
     }
 }
 
@@ -70,9 +70,9 @@ impl Future for Timer {
 
         let mut buf = std::mem::MaybeUninit::<[u8; 8]>::uninit();
         /* safety: we check the return value */
-        map_libc_error(unsafe {
+        map_libc_result(unsafe {
             libc::read(
-                self.fd,
+                self.fd.as_raw_fd(),
                 buf.assume_init_mut().as_ptr() as *mut _,
                 buf.assume_init_ref().len(),
             ) as i32
