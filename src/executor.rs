@@ -4,12 +4,13 @@ use std::{
     io::Error,
     marker::PhantomData,
     ops::DerefMut,
+    os::fd::{AsRawFd, OwnedFd},
     pin::Pin,
     rc::Rc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
-use crate::{Priority, Task, map_libc_error};
+use crate::{Priority, Task, map_libc_fd, map_libc_result};
 
 /**
  * A type erased task.
@@ -62,7 +63,7 @@ impl std::ops::IndexMut<Priority> for [RefCell<Vec<TaskRef>>; 3] {
  * Executor
  */
 pub struct Executor {
-    epoll_fd: libc::c_int,
+    epoll_fd: OwnedFd,
     /* All tasks in the runq have either been newly spawned or have have been
      * woken. Either way, they need to be polled. */
     runq: [RefCell<Vec<TaskRef>>; 3],
@@ -72,7 +73,7 @@ pub struct Executor {
 impl Executor {
     fn new() -> Result<Self, Error> {
         /* safety: we check the return value */
-        let epoll_fd = map_libc_error(unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) })?;
+        let epoll_fd = map_libc_fd(unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) })?;
         Ok(Self {
             epoll_fd,
             runq: std::array::from_fn(|_| RefCell::new(Vec::new())),
@@ -111,8 +112,13 @@ impl Executor {
             /* wait for events */
             /* TODO: Dynamically size. Needs to be big enough to receive all events at once. */
             let mut events = std::mem::MaybeUninit::<[libc::epoll_event; 64]>::uninit();
-            let n_events = map_libc_error(unsafe {
-                libc::epoll_wait(self.epoll_fd, events.assume_init_mut().as_mut_ptr(), 64, -1)
+            let n_events = map_libc_result(unsafe {
+                libc::epoll_wait(
+                    self.epoll_fd.as_raw_fd(),
+                    events.assume_init_mut().as_mut_ptr(),
+                    64,
+                    -1,
+                )
             })? as usize;
             let events = unsafe { &events.assume_init()[..n_events] };
             /* wakeup futures which have an event, adding them to runq */
@@ -128,7 +134,7 @@ impl Executor {
 
     pub fn epoll_add(
         &self,
-        fd: libc::c_int,
+        fd: &OwnedFd,
         events: i32,
         ew: Pin<Rc<RefCell<EpollWaker>>>,
     ) -> Result<(), Error> {
@@ -138,16 +144,26 @@ impl Executor {
             u64: Rc::<RefCell<EpollWaker>>::into_raw(unsafe { Pin::into_inner_unchecked(ew) }) as _,
         };
         /* safety: we check the return value */
-        map_libc_error(unsafe {
-            libc::epoll_ctl(self.epoll_fd, libc::EPOLL_CTL_ADD, fd, &mut event)
+        map_libc_result(unsafe {
+            libc::epoll_ctl(
+                self.epoll_fd.as_raw_fd(),
+                libc::EPOLL_CTL_ADD,
+                fd.as_raw_fd(),
+                &mut event,
+            )
         })?;
         Ok(())
     }
 
-    pub fn epoll_del(&self, fd: libc::c_int) -> Result<(), Error> {
+    pub fn epoll_del(&self, fd: &OwnedFd) -> Result<(), Error> {
         /* safety: we check the return value */
-        map_libc_error(unsafe {
-            libc::epoll_ctl(self.epoll_fd, libc::EPOLL_CTL_DEL, fd, std::ptr::null_mut())
+        map_libc_result(unsafe {
+            libc::epoll_ctl(
+                self.epoll_fd.as_raw_fd(),
+                libc::EPOLL_CTL_DEL,
+                fd.as_raw_fd(),
+                std::ptr::null_mut(),
+            )
         })?;
         Ok(())
     }
