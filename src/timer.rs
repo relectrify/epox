@@ -1,8 +1,16 @@
-use std::os::fd::{AsRawFd, OwnedFd};
-use std::{cell::RefCell, io::Error, marker::PhantomData, pin::Pin, rc::Rc, task::Poll};
-
-use crate::executor::{EXECUTOR, EpollWaker};
-use crate::{map_libc_fd, map_libc_result};
+use crate::{
+    executor::{EXECUTOR, EpollWaker},
+    map_libc_fd, map_libc_result,
+};
+use std::{
+    cell::RefCell,
+    io::Error,
+    marker::PhantomData,
+    os::fd::{AsRawFd, OwnedFd},
+    pin::Pin,
+    rc::Rc,
+    task::Poll,
+};
 
 /*
  * Timer
