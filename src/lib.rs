@@ -1,7 +1,9 @@
+pub mod signal;
 pub mod timer;
 
 pub use fd::Fd;
 pub use nix::sys::epoll::EpollFlags;
+pub use signal::SignalHandler;
 pub use task::Task;
 pub use timer::Timer;
 
