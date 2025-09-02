@@ -1,7 +1,12 @@
+pub mod prelude {
+    pub use futures::prelude::*;
+}
+
 pub mod timer;
 
-pub use fd::Fd;
 pub use nix::sys::epoll::EpollFlags;
+
+pub use fd::{Fd, ReadableFd, WritableFd};
 pub use task::Task;
 pub use timer::Timer;
 
