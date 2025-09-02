@@ -78,9 +78,7 @@ impl<T: 'static, F: Future<Output = T> + 'static> AnyTask for Task<T, F> {
     }
 
     fn take_pending(&mut self) -> bool {
-        let pending = self.pending;
-        self.pending = false;
-        pending
+        std::mem::replace(&mut self.pending, false)
     }
 
     fn as_any(&self) -> &dyn Any {
