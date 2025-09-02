@@ -4,7 +4,7 @@ use std::{
     cell::RefCell,
     io::Error,
     marker::PhantomData,
-    os::fd::{AsRawFd, OwnedFd},
+    os::fd::{AsRawFd, OwnedFd, RawFd},
     pin::Pin,
     rc::Rc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -122,7 +122,8 @@ impl Executor {
             let events = unsafe { &events.assume_init()[..n_events.try_into().unwrap()] };
             /* wakeup futures which have an event, adding them to runq */
             for e in events {
-                let ew = unsafe { Rc::<RefCell<EpollWaker>>::from_raw(e.u64 as *const _) };
+                /* safety: e.u64 is the result of Pin::into_inner_unchecked */
+                let ew = unsafe { Pin::new_unchecked(&*(e.u64 as *mut RefCell<EpollWaker>)) };
                 let mut waker = ew.borrow_mut();
                 waker.event = true;
                 waker.waker.wake_by_ref();
@@ -133,34 +134,34 @@ impl Executor {
 
     pub fn epoll_add(
         &self,
-        fd: &OwnedFd,
-        events: i32,
-        ew: Pin<Rc<RefCell<EpollWaker>>>,
+        fd: RawFd,
+        events: Events,
+        ew: Pin<&RefCell<EpollWaker>>,
     ) -> Result<(), Error> {
         let mut event = libc::epoll_event {
             events: events.try_into().unwrap(),
             /* safety: the pinned object remains pinned, we don't move it */
-            u64: Rc::<RefCell<EpollWaker>>::into_raw(unsafe { Pin::into_inner_unchecked(ew) }) as _,
+            u64: std::ptr::from_ref(unsafe { Pin::into_inner_unchecked(ew) }) as _,
         };
         /* safety: we check the return value */
         map_libc_result(unsafe {
             libc::epoll_ctl(
                 self.epoll_fd.as_raw_fd(),
                 libc::EPOLL_CTL_ADD,
-                fd.as_raw_fd(),
+                fd,
                 &raw mut event,
             )
         })?;
         Ok(())
     }
 
-    pub fn epoll_del(&self, fd: &OwnedFd) -> Result<(), Error> {
+    pub fn epoll_del(&self, fd: RawFd) -> Result<(), Error> {
         /* safety: we check the return value */
         map_libc_result(unsafe {
             libc::epoll_ctl(
                 self.epoll_fd.as_raw_fd(),
                 libc::EPOLL_CTL_DEL,
-                fd.as_raw_fd(),
+                fd,
                 std::ptr::null_mut(),
             )
         })?;
