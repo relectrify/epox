@@ -1,14 +1,10 @@
-use crate::{
-    executor::{EXECUTOR, EpollWaker},
-    map_libc_fd, map_libc_result,
-};
+use crate::{Events, Fd, map_libc_fd, map_libc_result};
 use std::{
-    cell::RefCell,
+    future::Future,
     io::Error,
     marker::PhantomData,
     os::fd::{AsRawFd, OwnedFd},
     pin::Pin,
-    rc::Rc,
     task::Poll,
 };
 
@@ -16,27 +12,19 @@ use std::{
  * Timer
  */
 pub struct Timer {
-    fd: OwnedFd,
-    ew: Pin<Rc<RefCell<EpollWaker>>>,
+    fd: Fd<OwnedFd>,
     _not_send_not_sync: PhantomData<*mut ()>,
 }
 
 impl Timer {
     pub fn new() -> Result<Self, Error> {
         /* safety: we check return value before using it */
-        let fd = map_libc_fd(unsafe {
-            libc::timerfd_create(
-                libc::CLOCK_MONOTONIC,
-                libc::TFD_NONBLOCK | libc::TFD_CLOEXEC,
-            )
-        })?;
-        let s = Self {
-            fd,
-            ew: Rc::pin(RefCell::new(EpollWaker::default())),
+        let fd =
+            map_libc_fd(unsafe { libc::timerfd_create(libc::CLOCK_MONOTONIC, libc::TFD_CLOEXEC) })?;
+        Ok(Self {
+            fd: Fd::new(fd, Events::IN)?,
             _not_send_not_sync: PhantomData,
-        };
-        EXECUTOR.with(|e| e.epoll_add(&s.fd, libc::EPOLLIN, s.ew.clone()))?;
-        Ok(s)
+        })
     }
 
     pub fn set_time(
@@ -65,19 +53,26 @@ impl Timer {
         })?;
         Ok(())
     }
-}
 
-impl Drop for Timer {
-    fn drop(&mut self) {
-        EXECUTOR.with(|e| e.epoll_del(&self.fd)).unwrap();
+    #[must_use]
+    pub const fn tick(&mut self) -> TimerFuture {
+        TimerFuture { timer: self }
     }
 }
 
-impl Future for Timer {
+/*
+ * TimerFuture
+ */
+pub struct TimerFuture<'a> {
+    timer: &'a mut Timer,
+}
+
+impl Future for TimerFuture<'_> {
     type Output = Result<u64, Error>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        if !self.ew.borrow_mut().poll(cx) {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let timer_ready = std::pin::pin!(self.timer.fd.ready());
+        if timer_ready.poll(cx) == Poll::Pending {
             return Poll::Pending;
         }
 
@@ -85,7 +80,7 @@ impl Future for Timer {
         /* safety: we check the return value */
         map_libc_result(unsafe {
             libc::read(
-                self.fd.as_raw_fd(),
+                self.timer.fd.as_raw_fd(),
                 buf.assume_init_mut().as_mut_ptr().cast(),
                 buf.assume_init_ref().len(),
             ) as i32
