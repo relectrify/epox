@@ -1,4 +1,4 @@
-use crate::{Priority, Task, map_libc_fd, map_libc_result};
+use crate::{Events, Priority, Task, map_libc_fd, map_libc_result};
 use std::{
     any::Any,
     cell::RefCell,
@@ -125,7 +125,7 @@ impl Executor {
                 /* safety: e.u64 is the result of Pin::into_inner_unchecked */
                 let ew = unsafe { Pin::new_unchecked(&*(e.u64 as *mut RefCell<EpollWaker>)) };
                 let mut waker = ew.borrow_mut();
-                waker.event = true;
+                waker.events = Events::from_bits(e.events).unwrap();
                 waker.waker.wake_by_ref();
             }
         }
@@ -139,7 +139,7 @@ impl Executor {
         ew: Pin<&RefCell<EpollWaker>>,
     ) -> Result<(), Error> {
         let mut event = libc::epoll_event {
-            events: events.try_into().unwrap(),
+            events: events.bits(),
             /* safety: the pinned object remains pinned, we don't move it */
             u64: std::ptr::from_ref(unsafe { Pin::into_inner_unchecked(ew) }) as _,
         };
@@ -240,21 +240,19 @@ fn build_task_waker(task: TaskRef) -> Waker {
  */
 pub struct EpollWaker {
     waker: Waker,
-    event: bool,
+    events: Events,
 }
 
 impl EpollWaker {
     /**
-     * Check if this EpollWaker instance has had an event since it was last
-     * polled.
+     * Check if this EpollWaker instance has had any events since it was
+     * last polled.
      */
-    pub fn poll(&mut self, cx: &std::task::Context<'_>) -> bool {
-        if !self.event {
+    pub fn poll(&mut self, cx: &std::task::Context<'_>) -> Events {
+        if self.events.is_empty() {
             self.waker.clone_from(cx.waker());
-            return false;
         }
-        self.event = false;
-        true
+        std::mem::replace(&mut self.events, Events::empty())
     }
 }
 
@@ -262,7 +260,7 @@ impl Default for EpollWaker {
     fn default() -> Self {
         Self {
             waker: Waker::noop().clone(),
-            event: false,
+            events: Events::empty(),
         }
     }
 }
