@@ -5,3 +5,32 @@ edition = "2024"
 
 [dependencies]
 libc = "0.2.174"
+
+[lints.clippy]
+nursery = "warn"
+pedantic = "warn"
+
+cognitive_complexity = { level = "allow", priority = 1 }
+future_not_send = { level = "allow", priority = 1 }
+option_if_let_else = { level = "allow", priority = 1 }
+redundant_pub_crate = { level = "allow", priority = 1 }
+significant_drop_tightening = { level = "allow", priority = 1 }
+suboptimal_flops = { level = "allow", priority = 1 }
+tuple_array_conversions = { level = "allow", priority = 1 }
+
+cast_possible_truncation = { level = "allow", priority = 1 }
+cast_precision_loss = { level = "allow", priority = 1 }
+doc_markdown = { level = "allow", priority = 1 }
+if_not_else = { level = "allow", priority = 1 }
+items_after_statements = { level = "allow", priority = 1 }
+match_wildcard_for_single_variants = { level = "allow", priority = 1 }
+missing_errors_doc = { level = "allow", priority = 1 }
+missing_panics_doc = { level = "allow", priority = 1 }
+needless_pass_by_value = { level = "allow", priority = 1 }
+redundant_closure = { level = "allow", priority = 1 }
+redundant_closure_for_method_calls = { level = "allow", priority = 1 }
+similar_names = { level = "allow", priority = 1 }
+too_many_lines = { level = "allow", priority = 1 }
+type_complexity = { level = "allow", priority = 1 }
+unreadable_literal = { level = "allow", priority = 1 }
+unused_self = { level = "allow", priority = 1 }
