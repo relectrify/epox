@@ -43,11 +43,11 @@ pub fn run() -> Result<(), std::io::Error> {
 }
 
 /**
- * Map a libc `-1 means error is in errno` function returning a file descriptor
- * to a [`Result`].
+ * Map a libc `-1 means error is in errno` function returning a file
+ * descriptor to a [`Result`].
  *
- * Many C library functions return -1 on failure and store the reason for the
- * error in errno.
+ * Many C library functions return -1 on failure and store the reason for
+ * the error in errno.
  */
 fn map_libc_fd(result: libc::c_int) -> Result<OwnedFd, std::io::Error> {
     if result < 0 {
@@ -59,11 +59,11 @@ fn map_libc_fd(result: libc::c_int) -> Result<OwnedFd, std::io::Error> {
 }
 
 /**
- * Map a libc `-1 means error is in errno` function returning an integer to a
- * [`Result`].
+ * Map a libc `-1 means error is in errno` function returning an integer to
+ * a [`Result`].
  *
- * Many C library functions return -1 on failure and store the reason for the
- * error in errno.
+ * Many C library functions return -1 on failure and store the reason for
+ * the error in errno.
  */
 fn map_libc_result(result: libc::c_int) -> Result<libc::c_int, std::io::Error> {
     if result < 0 {

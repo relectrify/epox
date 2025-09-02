@@ -1,3 +1,7 @@
+use crate::{
+    Priority,
+    executor::{AnyTask, TaskRef},
+};
 use std::{
     any::Any,
     cell::Cell,
@@ -6,15 +10,12 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use crate::Priority;
-use crate::executor::{AnyTask, TaskRef};
-
 /**
  * A task stores a future.
  *
- * Why repr(C)? So that the pending flag is at the same offset for all tasks,
- * meaning that the generated implementations of {set,take}_pending can
- * be shared between all instances of Task.
+ * Why repr(C)? So that the pending flag is at the same offset for all
+ * tasks, meaning that the generated implementations of {set,take}_pending
+ * can be shared between all instances of Task.
  */
 #[repr(C)]
 pub struct Task<T, F: Future<Output = T>> {

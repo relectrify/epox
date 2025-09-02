@@ -1,3 +1,4 @@
+use crate::{Priority, Task, map_libc_fd, map_libc_result};
 use std::{
     any::Any,
     cell::RefCell,
@@ -8,8 +9,6 @@ use std::{
     rc::Rc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
-
-use crate::{Priority, Task, map_libc_fd, map_libc_result};
 
 /**
  * A type erased task.
@@ -109,7 +108,8 @@ impl Executor {
             }
 
             /* wait for events */
-            /* TODO: Dynamically size. Needs to be big enough to receive all events at once. */
+            /* TODO: Dynamically size. Needs to be big enough to receive all events at
+             * once. */
             let mut events = std::mem::MaybeUninit::<[libc::epoll_event; 64]>::uninit();
             let n_events = map_libc_result(unsafe {
                 libc::epoll_wait(
@@ -234,8 +234,8 @@ fn build_task_waker(task: TaskRef) -> Waker {
 }
 
 /**
- * All events registered with epoll hold a reference to an EpollWaker in their
- * associated data.
+ * All events registered with epoll hold a reference to an EpollWaker in
+ * their associated data.
  */
 pub struct EpollWaker {
     waker: Waker,
