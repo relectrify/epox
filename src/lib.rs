@@ -1,7 +1,9 @@
 mod executor;
+mod fd;
 mod task;
 mod timer;
 
+pub use fd::Fd;
 use std::os::fd::{FromRawFd, OwnedFd};
 pub use task::Task;
 pub use timer::Timer;
