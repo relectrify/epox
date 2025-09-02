@@ -26,7 +26,7 @@ impl Timer {
     }
 
     #[must_use]
-    pub const fn tick(&mut self) -> TimerFuture {
+    pub const fn tick(&mut self) -> TimerFuture<'_> {
         TimerFuture { timer: self }
     }
 }
