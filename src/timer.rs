@@ -48,7 +48,12 @@ impl Timer {
         };
         /* safety: we check the return value */
         map_libc_result(unsafe {
-            libc::timerfd_settime(self.fd.as_raw_fd(), 0, &new_value, std::ptr::null_mut())
+            libc::timerfd_settime(
+                self.fd.as_raw_fd(),
+                0,
+                &raw const new_value,
+                std::ptr::null_mut(),
+            )
         })?;
         Ok(())
     }
@@ -73,7 +78,7 @@ impl Future for Timer {
         map_libc_result(unsafe {
             libc::read(
                 self.fd.as_raw_fd(),
-                buf.assume_init_mut().as_ptr() as *mut _,
+                buf.assume_init_mut().as_mut_ptr().cast(),
                 buf.assume_init_ref().len(),
             ) as i32
         })?;
@@ -85,9 +90,9 @@ impl Future for Timer {
 /*
  * duration_to_timespec
  */
-const fn duration_to_timespec(duration: std::time::Duration) -> libc::timespec {
+fn duration_to_timespec(duration: std::time::Duration) -> libc::timespec {
     libc::timespec {
-        tv_sec: duration.as_secs() as _,
-        tv_nsec: duration.subsec_nanos() as _,
+        tv_sec: duration.as_secs().try_into().unwrap(),
+        tv_nsec: duration.subsec_nanos().into(),
     }
 }

@@ -3,7 +3,6 @@ use std::{
     cell::RefCell,
     io::Error,
     marker::PhantomData,
-    ops::DerefMut,
     os::fd::{AsRawFd, OwnedFd},
     pin::Pin,
     rc::Rc,
@@ -101,7 +100,7 @@ impl Executor {
                 let mut t = t.borrow_mut();
                 t.set_pending();
                 /* safety: t is pinned therefore its deref is also pinned */
-                let mut t = unsafe { Pin::new_unchecked(t.deref_mut()) };
+                let mut t = unsafe { Pin::new_unchecked(&mut *t) };
                 pending = t.as_mut().poll(&mut cx) == Poll::Pending || pending;
             }
             if !pending {
@@ -119,8 +118,8 @@ impl Executor {
                     64,
                     -1,
                 )
-            })? as usize;
-            let events = unsafe { &events.assume_init()[..n_events] };
+            })?;
+            let events = unsafe { &events.assume_init()[..n_events.try_into().unwrap()] };
             /* wakeup futures which have an event, adding them to runq */
             for e in events {
                 let ew = unsafe { Rc::<RefCell<EpollWaker>>::from_raw(e.u64 as *const _) };
@@ -139,7 +138,7 @@ impl Executor {
         ew: Pin<Rc<RefCell<EpollWaker>>>,
     ) -> Result<(), Error> {
         let mut event = libc::epoll_event {
-            events: events as u32,
+            events: events.try_into().unwrap(),
             /* safety: the pinned object remains pinned, we don't move it */
             u64: Rc::<RefCell<EpollWaker>>::into_raw(unsafe { Pin::into_inner_unchecked(ew) }) as _,
         };
@@ -149,7 +148,7 @@ impl Executor {
                 self.epoll_fd.as_raw_fd(),
                 libc::EPOLL_CTL_ADD,
                 fd.as_raw_fd(),
-                &mut event,
+                &raw mut event,
             )
         })?;
         Ok(())
@@ -198,13 +197,13 @@ fn build_task_waker(task: TaskRef) -> Waker {
 
     unsafe fn clone(p: *const ()) -> RawWaker {
         /* safety: p is the result of Rc::<Box<RefCell<dyn AnyTask>>>::into_raw */
-        unsafe { Rc::increment_strong_count(p as *const Box<RefCell<dyn AnyTask>>) };
+        unsafe { Rc::increment_strong_count(p.cast::<Box<RefCell<dyn AnyTask>>>()) };
         RawWaker::new(p, &VTABLE)
     }
 
     unsafe fn wake(p: *const ()) {
         /* safety: p is the result of Rc::<Box<RefCell<dyn AnyTask>>>::into_raw */
-        let rc = unsafe { Rc::<Box<RefCell<dyn AnyTask>>>::from_raw(p as *const _) };
+        let rc = unsafe { Rc::<Box<RefCell<dyn AnyTask>>>::from_raw(p.cast()) };
         /* safety: rc is the result of Pin::into_inner_unchecked */
         let task = unsafe { Pin::new_unchecked(rc) };
         EXECUTOR.with(|e| e.enqueue(task));
@@ -213,7 +212,7 @@ fn build_task_waker(task: TaskRef) -> Waker {
     unsafe fn wake_by_ref(p: *const ()) {
         unsafe {
             /* safety: p is the result of Rc::<Box<RefCell<dyn AnyTask>>>::into_raw */
-            Rc::increment_strong_count(p as *const Box<RefCell<dyn AnyTask>>);
+            Rc::increment_strong_count(p.cast::<Box<RefCell<dyn AnyTask>>>());
             /* safety: wake consumes p, but we have incremented the strong
              * count so wake_by_ref semantics are met */
             wake(p);
@@ -221,13 +220,13 @@ fn build_task_waker(task: TaskRef) -> Waker {
     }
 
     unsafe fn drop(p: *const ()) {
-        unsafe { Rc::decrement_strong_count(p as *const Box<RefCell<dyn AnyTask>>) };
+        unsafe { Rc::decrement_strong_count(p.cast::<Box<RefCell<dyn AnyTask>>>()) };
     }
 
     let raw_waker = RawWaker::new(
         /* safety: the pinned object remains pinned, we don't move it */
         Rc::<Box<RefCell<dyn AnyTask>>>::into_raw(unsafe { Pin::into_inner_unchecked(task) })
-            as *const (),
+            .cast::<()>(),
         &VTABLE,
     );
 
@@ -248,13 +247,13 @@ impl EpollWaker {
      * Check if this EpollWaker instance has had an event since it was last
      * polled.
      */
-    pub fn poll(&mut self, cx: &mut std::task::Context<'_>) -> bool {
+    pub fn poll(&mut self, cx: &std::task::Context<'_>) -> bool {
         if !self.event {
-            self.waker = cx.waker().clone();
+            self.waker.clone_from(cx.waker());
             return false;
         }
         self.event = false;
-        return true;
+        true
     }
 }
 
