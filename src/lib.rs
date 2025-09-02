@@ -18,6 +18,27 @@ pub enum Priority {
     Low,
 }
 
+bitflags::bitflags! {
+    /**
+     * Epoll events.
+     */
+    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+    pub struct Events: u32 {
+        /** The associated file is available for read(2) operations. */
+        const IN = libc::EPOLLIN as u32;
+        /** The associated file is available for write(2) operations. */
+        const OUT = libc::EPOLLOUT as u32;
+        /** Stream socket peer closed connection, or shut down writing half of connection. */
+        const RDHUP = libc::EPOLLRDHUP as u32;
+        /** There is an exceptional condition on the file descriptor. */
+        const PRI = libc::EPOLLPRI as u32;
+        /** Error condition happened on the associated file descriptor. */
+        const ERR = libc::EPOLLERR as u32;
+        /** Hang up happened on the associated file descriptor. */
+        const HUP = libc::EPOLLHUP as u32;
+    }
+}
+
 /**
  * Spawn a task on the thread local executor with normal priority.
  */
