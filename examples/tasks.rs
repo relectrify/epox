@@ -6,7 +6,7 @@ fn main() {
         timer
             .set_time(core::time::Duration::from_millis(100), None)
             .unwrap();
-        timer.await.unwrap();
+        timer.tick().await.unwrap();
         println!("t1 done");
         20
     });
@@ -18,7 +18,7 @@ fn main() {
         timer
             .set_time(core::time::Duration::from_millis(200), None)
             .unwrap();
-        timer.await.unwrap();
+        timer.tick().await.unwrap();
         println!("t2 done");
         22
     });
