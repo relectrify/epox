@@ -11,7 +11,7 @@ pub use timer::Timer;
  *
  * Tasks are run from high to low priority.
  */
-#[derive(Copy, Clone)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Priority {
     High,
     Normal,
