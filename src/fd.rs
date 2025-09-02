@@ -37,10 +37,8 @@ impl<T: AsRawFd> Fd<T> {
         EXECUTOR.with(|e| e.epoll_add(fd, events, s.ew.as_ref()))?;
         Ok(s)
     }
-}
 
-impl<T: AsRawFd> Fd<T> {
-    pub const fn ready(&mut self) -> FdFuture<T> {
+    pub const fn ready(&mut self) -> FdFuture<'_, T> {
         FdFuture { fd: self }
     }
 }
