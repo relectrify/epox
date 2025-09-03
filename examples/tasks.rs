@@ -35,8 +35,24 @@ fn main() {
         result
     });
 
+    // this task doesn't interact with the other ones at all
+    println!("spawning t4");
+    let t4 = epox::spawn(async {
+        println!("t4 running");
+        let mut timer = epox::Timer::new().unwrap();
+        timer
+            .set(epox::timer::Expiration::OneShot(
+                core::time::Duration::from_millis(600).into(),
+            ))
+            .unwrap();
+        timer.tick().await.unwrap();
+        println!("t4 done");
+        "value"
+    });
+
     println!("running executor");
     epox::run().unwrap();
 
     println!("t3 returned {}", t3.result().unwrap());
+    println!("t4 returned {:?}", t4.result().unwrap());
 }

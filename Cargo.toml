@@ -9,6 +9,7 @@ futures = "0.3.31"
 
 [dev-dependencies]
 serialport = "4"
+clap = { version = "4.5.47", features = ["derive"] }
 
 [lints.clippy]
 nursery = "warn"
