@@ -5,7 +5,7 @@ fn main() {
         serialport::new("/dev/ttyUSB0", 115200)
             .open_native()
             .unwrap(),
-        epox::Events::IN,
+        epox::EpollFlags::EPOLLIN,
     )
     .unwrap();
     epox::spawn(async move {
