@@ -41,6 +41,10 @@ impl<T: AsRawFd> Fd<T> {
     pub const fn ready(&mut self) -> FdFuture<'_, T> {
         FdFuture { fd: self }
     }
+
+    fn poll_ready(&self, cx: &std::task::Context<'_>, flags: EpollFlags) -> bool {
+        !self.ew.borrow_mut().poll(cx).intersection(flags).is_empty()
+    }
 }
 
 impl<T: AsRawFd> Drop for Fd<T> {
