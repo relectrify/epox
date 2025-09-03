@@ -4,7 +4,9 @@ fn main() {
         println!("t1 running");
         let mut timer = epox::Timer::new().unwrap();
         timer
-            .set_time(core::time::Duration::from_millis(100), None)
+            .set(epox::timer::Expiration::OneShot(
+                core::time::Duration::from_millis(100).into(),
+            ))
             .unwrap();
         timer.tick().await.unwrap();
         println!("t1 done");
@@ -16,7 +18,9 @@ fn main() {
         println!("t2 running");
         let mut timer = epox::Timer::new().unwrap();
         timer
-            .set_time(core::time::Duration::from_millis(200), None)
+            .set(epox::timer::Expiration::OneShot(
+                core::time::Duration::from_millis(200).into(),
+            ))
             .unwrap();
         timer.tick().await.unwrap();
         println!("t2 done");

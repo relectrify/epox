@@ -1,10 +1,11 @@
-use crate::{Events, Priority, Task, map_libc_fd, map_libc_result};
+use crate::{Priority, Task};
+use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout};
 use std::{
     any::Any,
     cell::RefCell,
     io::Error,
     marker::PhantomData,
-    os::fd::{AsRawFd, OwnedFd, RawFd},
+    os::fd::AsFd,
     pin::Pin,
     rc::Rc,
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -61,20 +62,20 @@ impl std::ops::IndexMut<Priority> for [RefCell<Vec<TaskRef>>; 3] {
  * Executor
  */
 pub struct Executor {
-    epoll_fd: OwnedFd,
+    epoll: Epoll,
     /* All tasks in the runq have either been newly spawned or have have been
      * woken. Either way, they need to be polled. */
     runq: [RefCell<Vec<TaskRef>>; 3],
+    events: RefCell<Vec<EpollEvent>>,
     _not_send_not_sync: PhantomData<*mut ()>,
 }
 
 impl Executor {
     fn new() -> Result<Self, Error> {
-        /* safety: we check the return value */
-        let epoll_fd = map_libc_fd(unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) })?;
         Ok(Self {
-            epoll_fd,
+            epoll: Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)?,
             runq: std::array::from_fn(|_| RefCell::new(Vec::new())),
+            events: RefCell::new(Vec::new()),
             _not_send_not_sync: PhantomData,
         })
     }
@@ -108,24 +109,15 @@ impl Executor {
             }
 
             /* wait for events */
-            /* TODO: Dynamically size. Needs to be big enough to receive all events at
-             * once. */
-            let mut events = std::mem::MaybeUninit::<[libc::epoll_event; 64]>::uninit();
-            let n_events = map_libc_result(unsafe {
-                libc::epoll_wait(
-                    self.epoll_fd.as_raw_fd(),
-                    events.assume_init_mut().as_mut_ptr(),
-                    64,
-                    -1,
-                )
-            })?;
-            let events = unsafe { &events.assume_init()[..n_events.try_into().unwrap()] };
+            let n_events = self
+                .epoll
+                .wait(self.events.borrow_mut().as_mut_slice(), EpollTimeout::NONE)?;
             /* wakeup futures which have an event, adding them to runq */
-            for e in events {
-                /* safety: e.u64 is the result of Pin::into_inner_unchecked */
-                let ew = unsafe { Pin::new_unchecked(&*(e.u64 as *mut RefCell<EpollWaker>)) };
+            for e in &self.events.borrow()[0..n_events] {
+                /* safety: e.data() is the result of Pin::into_inner_unchecked */
+                let ew = unsafe { Pin::new_unchecked(&*(e.data() as *mut RefCell<EpollWaker>)) };
                 let mut waker = ew.borrow_mut();
-                waker.events = Events::from_bits(e.events).unwrap();
+                waker.events = e.events();
                 waker.waker.wake_by_ref();
             }
         }
@@ -134,37 +126,25 @@ impl Executor {
 
     pub fn epoll_add(
         &self,
-        fd: RawFd,
-        events: Events,
+        fd: impl AsFd,
+        events: EpollFlags,
         ew: Pin<&RefCell<EpollWaker>>,
     ) -> Result<(), Error> {
-        let mut event = libc::epoll_event {
-            events: events.bits(),
-            /* safety: the pinned object remains pinned, we don't move it */
-            u64: std::ptr::from_ref(unsafe { Pin::into_inner_unchecked(ew) }) as _,
-        };
-        /* safety: we check the return value */
-        map_libc_result(unsafe {
-            libc::epoll_ctl(
-                self.epoll_fd.as_raw_fd(),
-                libc::EPOLL_CTL_ADD,
-                fd,
-                &raw mut event,
-            )
-        })?;
+        self.events.borrow_mut().push(EpollEvent::empty());
+        self.epoll.add(
+            fd,
+            EpollEvent::new(
+                events,
+                /* safety: the pinned object remains pinned, we don't move it */
+                std::ptr::from_ref(unsafe { Pin::into_inner_unchecked(ew) }) as _,
+            ),
+        )?;
         Ok(())
     }
 
-    pub fn epoll_del(&self, fd: RawFd) -> Result<(), Error> {
-        /* safety: we check the return value */
-        map_libc_result(unsafe {
-            libc::epoll_ctl(
-                self.epoll_fd.as_raw_fd(),
-                libc::EPOLL_CTL_DEL,
-                fd,
-                std::ptr::null_mut(),
-            )
-        })?;
+    pub fn epoll_del(&self, fd: impl AsFd) -> Result<(), Error> {
+        self.events.borrow_mut().pop();
+        self.epoll.delete(fd)?;
         Ok(())
     }
 
@@ -240,7 +220,7 @@ fn build_task_waker(task: TaskRef) -> Waker {
  */
 pub struct EpollWaker {
     waker: Waker,
-    events: Events,
+    events: EpollFlags,
 }
 
 impl EpollWaker {
@@ -248,11 +228,11 @@ impl EpollWaker {
      * Check if this EpollWaker instance has had any events since it was
      * last polled.
      */
-    pub fn poll(&mut self, cx: &std::task::Context<'_>) -> Events {
+    pub fn poll(&mut self, cx: &std::task::Context<'_>) -> EpollFlags {
         if self.events.is_empty() {
             self.waker.clone_from(cx.waker());
         }
-        std::mem::replace(&mut self.events, Events::empty())
+        std::mem::replace(&mut self.events, EpollFlags::empty())
     }
 }
 
@@ -260,7 +240,7 @@ impl Default for EpollWaker {
     fn default() -> Self {
         Self {
             waker: Waker::noop().clone(),
-            events: Events::empty(),
+            events: EpollFlags::empty(),
         }
     }
 }
