@@ -8,6 +8,7 @@ nix = { version = "0.30", features = ["event", "fs", "signal", "time"] }
 
 [dev-dependencies]
 serialport = "4"
+clap = { version = "4.5.47", features = ["derive"] }
 
 [lints.clippy]
 nursery = "warn"
