@@ -45,6 +45,18 @@ impl<T: AsRawFd> Fd<T> {
     pub fn poll_ready(&self, cx: &std::task::Context<'_>) -> EpollFlags {
         self.ew.borrow_mut().poll(cx)
     }
+
+    pub const fn with_fd<Output, F: FnMut(&mut T) -> nix::Result<Output> + Unpin>(
+        &mut self,
+        interests: EpollFlags,
+        func: F,
+    ) -> WithFd<'_, T, Output, F> {
+        WithFd {
+            fd: self,
+            func,
+            interests,
+        }
+    }
 }
 
 impl<T: AsRawFd> Drop for Fd<T> {
@@ -120,5 +132,30 @@ impl<T: AsFd> std::ops::Deref for AsFdWrapper<T> {
 impl<T: AsFd> std::ops::DerefMut for AsFdWrapper<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
+    }
+}
+
+pub struct WithFd<'a, T: AsRawFd, Output, F: FnMut(&mut T) -> nix::Result<Output> + Unpin> {
+    fd: &'a mut Fd<T>,
+    func: F,
+    interests: EpollFlags,
+}
+
+impl<T: AsRawFd, Output, F: FnMut(&mut T) -> nix::Result<Output> + Unpin> Future
+    for WithFd<'_, T, Output, F>
+{
+    type Output = nix::Result<Output>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        if !self.fd.poll_ready(cx, self.interests) {
+            return Poll::Pending;
+        }
+
+        let Self { fd, func, .. } = self.get_mut();
+
+        match func(fd) {
+            Result::Err(nix::errno::Errno::EWOULDBLOCK) => Poll::Pending,
+            ret => Poll::Ready(ret),
+        }
     }
 }
