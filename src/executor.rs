@@ -103,7 +103,7 @@ impl Executor {
                 let mut t = unsafe { Pin::new_unchecked(&mut *t) };
                 pending = t.as_mut().poll(&mut cx) == Poll::Pending || pending;
             }
-            if !pending {
+            if !pending && self.events.borrow().is_empty() {
                 /* all tasks have completed */
                 break;
             }
