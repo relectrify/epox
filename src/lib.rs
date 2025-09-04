@@ -2,11 +2,13 @@ mod executor;
 mod fd;
 mod task;
 pub mod timer;
+mod yield_task;
 
 pub use fd::Fd;
 pub use nix::sys::epoll::EpollFlags;
 pub use task::Task;
 pub use timer::Timer;
+pub use yield_task::yield_now;
 
 /**
  * Task priority.

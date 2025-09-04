@@ -66,6 +66,7 @@ pub struct Executor {
     /* All tasks in the runq have either been newly spawned or have have been
      * woken. Either way, they need to be polled. */
     runq: [RefCell<Vec<TaskRef>>; 3],
+    yielded: RefCell<Vec<Waker>>,
     events: RefCell<Vec<EpollEvent>>,
     _not_send_not_sync: PhantomData<*mut ()>,
 }
@@ -75,6 +76,7 @@ impl Executor {
         Ok(Self {
             epoll: Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)?,
             runq: std::array::from_fn(|_| RefCell::new(Vec::new())),
+            yielded: RefCell::new(Vec::new()),
             events: RefCell::new(Vec::new()),
             _not_send_not_sync: PhantomData,
         })
@@ -108,10 +110,18 @@ impl Executor {
                 break;
             }
 
+            // we don't want to block on epoll if any tasks have yielded
+            // but we want to let io bound tasks run first
+            let epoll_timeout = if self.yielded.borrow().is_empty() {
+                EpollTimeout::NONE
+            } else {
+                EpollTimeout::ZERO
+            };
+
             /* wait for events */
             let n_events = self
                 .epoll
-                .wait(self.events.borrow_mut().as_mut_slice(), EpollTimeout::NONE)?;
+                .wait(self.events.borrow_mut().as_mut_slice(), epoll_timeout)?;
             /* wakeup futures which have an event, adding them to runq */
             for e in &self.events.borrow()[0..n_events] {
                 /* safety: e.data() is the result of Pin::into_inner_unchecked */
@@ -119,6 +129,10 @@ impl Executor {
                 let mut waker = ew.borrow_mut();
                 waker.events = e.events();
                 waker.waker.wake_by_ref();
+            }
+
+            while let Some(yielded) = self.yielded.borrow_mut().pop() {
+                yielded.wake();
             }
         }
         Ok(())
@@ -167,6 +181,11 @@ impl Executor {
             return Some(&self.runq[Priority::Low]);
         }
         None
+    }
+
+    pub(crate) fn yield_task(&self, cx: &std::task::Context<'_>) {
+        let waker = cx.waker().clone();
+        self.yielded.borrow_mut().push(waker);
     }
 }
 
