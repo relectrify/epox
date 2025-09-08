@@ -25,3 +25,33 @@ pub mod fd;
 pub mod task;
 
 mod queue;
+
+#[cfg(feature = "log")]
+mod log {
+    #[allow(unused_imports)]
+    pub(crate) use ::external_log::{debug, error, info, trace, warn};
+}
+
+#[cfg(not(feature = "log"))]
+#[allow(unused_macros)]
+mod log {
+    macro_rules! debug {
+        ($($arg:tt)+) => {};
+    }
+    macro_rules! error {
+        ($($arg:tt)+) => {};
+    }
+    macro_rules! info {
+        ($($arg:tt)+) => {};
+    }
+    macro_rules! trace {
+        ($($arg:tt)+) => {};
+    }
+    // if we call this "warn" rust will complain about an ambiguous name
+    macro_rules! warn_m {
+        ($($arg:tt)+) => {};
+    }
+
+    #[allow(unused_imports)]
+    pub(crate) use {debug, error, info, trace, warn_m as warn};
+}
