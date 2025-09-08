@@ -11,8 +11,8 @@ fn main() {
     epox::run().unwrap();
 }
 
-const TOTAL_DURATION: std::time::Duration = std::time::Duration::from_secs(3);
-const IO_TASK_STEPS: u32 = 10;
+const TOTAL_DURATION: std::time::Duration = std::time::Duration::from_secs(1);
+const IO_TASK_STEPS: u32 = 3;
 const BLOCKING_TASK_STEPS: u32 = IO_TASK_STEPS * 3;
 
 async fn io_task() -> Result<(), Box<dyn std::error::Error>> {
