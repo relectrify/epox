@@ -43,3 +43,13 @@ pub fn spawn_with_priority<T: 'static, F: Future<Output = T> + 'static>(
 pub fn run() -> Result<(), std::io::Error> {
     executor::EXECUTOR.with(|e| e.run())
 }
+
+/**
+ * Yield control to the executor.
+ *
+ * The executor will check for epoll events, then poll all tasks of equal or
+ * higher priority before polling the calling task again.
+ */
+pub async fn yield_now() {
+    task::YieldFuture::new().await;
+}

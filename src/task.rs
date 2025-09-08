@@ -1,6 +1,6 @@
 use crate::{
     Priority,
-    executor::{AnyTask, TaskRef},
+    executor::{AnyTask, EXECUTOR, TaskRef},
 };
 use std::{
     any::Any,
@@ -124,6 +124,33 @@ impl<T: 'static, F: Future<Output = T> + 'static> Future for Handle<T, F> {
             Poll::Ready(result)
         } else {
             task.set_waker(cx.waker().clone());
+            Poll::Pending
+        }
+    }
+}
+
+/**
+ * A future which yields once then continues running.
+ */
+pub struct YieldFuture {
+    yielded: bool,
+}
+
+impl YieldFuture {
+    pub const fn new() -> Self {
+        Self { yielded: false }
+    }
+}
+
+impl Future for YieldFuture {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.yielded {
+            Poll::Ready(())
+        } else {
+            self.get_mut().yielded = true;
+            EXECUTOR.with(|e| e.yield_now());
             Poll::Pending
         }
     }
