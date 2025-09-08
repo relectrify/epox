@@ -67,6 +67,7 @@ pub struct Executor {
      * woken. Either way, they need to be polled. */
     runq: [RefCell<Vec<TaskRef>>; 3],
     events: RefCell<Vec<EpollEvent>>,
+    task_yielded: RefCell<bool>,
     _not_send_not_sync: PhantomData<*mut ()>,
 }
 
@@ -76,6 +77,7 @@ impl Executor {
             epoll: Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)?,
             runq: std::array::from_fn(|_| RefCell::new(Vec::new())),
             events: RefCell::new(Vec::new()),
+            task_yielded: RefCell::new(false),
             _not_send_not_sync: PhantomData,
         })
     }
@@ -95,13 +97,25 @@ impl Executor {
             let mut pending = false;
             while let Some(q) = self.highest_priority_non_empty_runq() {
                 let t = q.borrow_mut().pop().unwrap();
-                let waker = build_task_waker(t.clone());
-                let mut cx = Context::from_waker(&waker);
-                let mut t = t.borrow_mut();
-                t.set_pending();
-                /* safety: t is pinned therefore its deref is also pinned */
-                let mut t = unsafe { Pin::new_unchecked(&mut *t) };
-                pending = t.as_mut().poll(&mut cx) == Poll::Pending || pending;
+                *self.task_yielded.borrow_mut() = false;
+                {
+                    /* poll the task */
+                    let waker = build_task_waker(t.clone());
+                    let mut cx = Context::from_waker(&waker);
+                    let mut t = t.borrow_mut();
+                    t.set_pending();
+                    /* safety: t is pinned therefore its deref is also pinned */
+                    let mut t = unsafe { Pin::new_unchecked(&mut *t) };
+                    pending = t.as_mut().poll(&mut cx) == Poll::Pending || pending;
+                }
+                if *self.task_yielded.borrow() {
+                    /* task yielded: insert task at the front of the queue so
+                     * that all other tasks run before it */
+                    let priority = t.borrow().priority();
+                    self.runq[priority].borrow_mut().insert(0, t);
+                    /* check for events */
+                    self.epoll_wait(EpollTimeout::ZERO)?;
+                }
             }
             if !pending && self.events.borrow().is_empty() {
                 /* all tasks have completed */
@@ -109,19 +123,13 @@ impl Executor {
             }
 
             /* wait for events */
-            let n_events = self
-                .epoll
-                .wait(self.events.borrow_mut().as_mut_slice(), EpollTimeout::NONE)?;
-            /* wakeup futures which have an event, adding them to runq */
-            for e in &self.events.borrow()[0..n_events] {
-                /* safety: e.data() is the result of Pin::into_inner_unchecked */
-                let ew = unsafe { Pin::new_unchecked(&*(e.data() as *mut RefCell<EpollWaker>)) };
-                let mut waker = ew.borrow_mut();
-                waker.events = e.events();
-                waker.waker.wake_by_ref();
-            }
+            self.epoll_wait(EpollTimeout::NONE)?;
         }
         Ok(())
+    }
+
+    pub fn yield_now(&self) {
+        *self.task_yielded.borrow_mut() = true;
     }
 
     pub fn epoll_add(
@@ -145,6 +153,24 @@ impl Executor {
     pub fn epoll_del(&self, fd: impl AsFd) -> Result<(), Error> {
         self.events.borrow_mut().pop();
         self.epoll.delete(fd)?;
+        Ok(())
+    }
+
+    fn epoll_wait(&self, timeout: EpollTimeout) -> Result<(), Error> {
+        if self.events.borrow().is_empty() {
+            return Ok(());
+        }
+        let n_events = self
+            .epoll
+            .wait(self.events.borrow_mut().as_mut_slice(), timeout)?;
+        /* wakeup futures which have an event, adding them to runq */
+        for e in &self.events.borrow()[0..n_events] {
+            /* safety: e.data() is the result of Pin::into_inner_unchecked */
+            let ew = unsafe { Pin::new_unchecked(&*(e.data() as *mut RefCell<EpollWaker>)) };
+            let mut waker = ew.borrow_mut();
+            waker.events |= e.events();
+            waker.waker.wake_by_ref();
+        }
         Ok(())
     }
 
