@@ -41,9 +41,8 @@ pub struct TimerFuture<'a> {
 impl Future for TimerFuture<'_> {
     type Output = Result<u64, Error>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let timer_ready = std::pin::pin!(self.timer.fd.ready());
-        if timer_ready.poll(cx) == Poll::Pending {
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        if self.timer.fd.poll_ready(cx).is_empty() {
             return Poll::Pending;
         }
 
