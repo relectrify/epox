@@ -5,6 +5,7 @@ use crate::{
 use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use std::{
     cell::RefCell,
+    io::{Error, ErrorKind},
     os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd},
     pin::Pin,
     task::Poll,
@@ -21,7 +22,7 @@ pub struct Fd<T: AsRawFd> {
 }
 
 impl<T: AsRawFd> Fd<T> {
-    pub fn new(inner: T, events: EpollFlags) -> Result<Self, std::io::Error> {
+    pub fn new(inner: T, events: EpollFlags) -> Result<Self, Error> {
         /* safety: fd stays open for the duration of the borrow */
         let fd = unsafe { BorrowedFd::borrow_raw(inner.as_raw_fd()) };
         /* we set all file descriptors of interest as non-blocking -- this isn't
@@ -46,7 +47,7 @@ impl<T: AsRawFd> Fd<T> {
         self.ew.borrow_mut().poll(cx)
     }
 
-    pub const fn with<Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, std::io::Error>>(
+    pub const fn with<Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error>>(
         &mut self,
         func: F,
     ) -> FdWithFuture<'_, T, Output, F> {
@@ -137,16 +138,16 @@ pub struct FdWithFuture<
     'a,
     T: AsRawFd,
     Output,
-    F: FnMut(&mut T, EpollFlags) -> Result<Output, std::io::Error>,
+    F: FnMut(&mut T, EpollFlags) -> Result<Output, Error>,
 > {
     fd: &'a mut Fd<T>,
     func: F,
 }
 
-impl<T: AsRawFd, Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, std::io::Error> + Unpin>
-    Future for FdWithFuture<'_, T, Output, F>
+impl<T: AsRawFd, Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error> + Unpin> Future
+    for FdWithFuture<'_, T, Output, F>
 {
-    type Output = Result<Output, std::io::Error>;
+    type Output = Result<Output, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let events = self.fd.poll_ready(cx);
@@ -156,7 +157,7 @@ impl<T: AsRawFd, Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, std::io:
 
         let Self { fd, func, .. } = self.get_mut();
         match func(fd, events) {
-            Result::Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Poll::Pending,
+            Result::Err(e) if e.kind() == ErrorKind::WouldBlock => Poll::Pending,
             ret => Poll::Ready(ret),
         }
     }
