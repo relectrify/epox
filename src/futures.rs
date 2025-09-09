@@ -21,6 +21,20 @@ impl<T: AsRawFd> AsyncReadFd<T> {
     }
 }
 
+impl<T: AsRawFd> std::ops::Deref for AsyncReadFd<T> {
+    type Target = Fd<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T: AsRawFd> std::ops::DerefMut for AsyncReadFd<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
 impl<T: AsRawFd> futures_io::AsyncRead for AsyncReadFd<T> {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -52,6 +66,20 @@ impl<T: AsRawFd> AsyncWriteFd<T> {
         Ok(Self {
             inner: Fd::new(inner, EpollFlags::EPOLLOUT)?,
         })
+    }
+}
+
+impl<T: AsRawFd> std::ops::Deref for AsyncWriteFd<T> {
+    type Target = Fd<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T: AsRawFd> std::ops::DerefMut for AsyncWriteFd<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
     }
 }
 
