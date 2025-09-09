@@ -46,16 +46,11 @@ impl<T: AsRawFd> Fd<T> {
         self.ew.borrow_mut().poll(cx)
     }
 
-    pub const fn with_fd<Output, F: FnMut(&mut T) -> nix::Result<Output> + Unpin>(
+    pub const fn with<Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, std::io::Error>>(
         &mut self,
-        interests: EpollFlags,
         func: F,
-    ) -> WithFd<'_, T, Output, F> {
-        WithFd {
-            fd: self,
-            func,
-            interests,
-        }
+    ) -> FdWithFuture<'_, T, Output, F> {
+        FdWithFuture { fd: self, func }
     }
 }
 
@@ -135,26 +130,33 @@ impl<T: AsFd> std::ops::DerefMut for AsFdWrapper<T> {
     }
 }
 
-pub struct WithFd<'a, T: AsRawFd, Output, F: FnMut(&mut T) -> nix::Result<Output> + Unpin> {
+/*
+ * FdWithFuture
+ */
+pub struct FdWithFuture<
+    'a,
+    T: AsRawFd,
+    Output,
+    F: FnMut(&mut T, EpollFlags) -> Result<Output, std::io::Error>,
+> {
     fd: &'a mut Fd<T>,
     func: F,
-    interests: EpollFlags,
 }
 
-impl<T: AsRawFd, Output, F: FnMut(&mut T) -> nix::Result<Output> + Unpin> Future
-    for WithFd<'_, T, Output, F>
+impl<T: AsRawFd, Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, std::io::Error> + Unpin>
+    Future for FdWithFuture<'_, T, Output, F>
 {
-    type Output = nix::Result<Output>;
+    type Output = Result<Output, std::io::Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        if !self.fd.poll_ready(cx, self.interests) {
+        let events = self.fd.poll_ready(cx);
+        if events.is_empty() {
             return Poll::Pending;
         }
 
         let Self { fd, func, .. } = self.get_mut();
-
-        match func(fd) {
-            Result::Err(nix::errno::Errno::EWOULDBLOCK) => Poll::Pending,
+        match func(fd, events) {
+            Result::Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Poll::Pending,
             ret => Poll::Ready(ret),
         }
     }
