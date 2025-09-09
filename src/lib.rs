@@ -1,17 +1,14 @@
-pub mod prelude {
-    pub use futures::prelude::*;
-}
-
 pub mod signal;
-
 pub mod timer;
 
+pub use fd::Fd;
 pub use nix::sys::epoll::EpollFlags;
 pub use signal::AsyncSignal;
-
-pub use fd::{Fd, ReadableFd, WritableFd};
 pub use task::Task;
 pub use timer::Timer;
+
+/** Compatibility with futures-rs. */
+pub mod futures;
 
 mod executor;
 mod fd;

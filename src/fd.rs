@@ -11,10 +11,6 @@ use std::{
     task::Poll,
 };
 
-mod futures_impls;
-
-pub use futures_impls::{ReadableFd, WritableFd};
-
 /**
  * A file descriptor of interest.
  *
