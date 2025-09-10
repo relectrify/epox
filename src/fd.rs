@@ -149,7 +149,7 @@ impl<T: AsRawFd, Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error> +
         let events = ready!(self.fd.poll_ready(cx));
         let Self { fd, func, .. } = self.get_mut();
         match func(fd, events) {
-            Result::Err(e) if e.kind() == ErrorKind::WouldBlock => Poll::Pending,
+            Err(e) if e.kind() == ErrorKind::WouldBlock => Poll::Pending,
             ret => Poll::Ready(ret),
         }
     }
