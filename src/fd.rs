@@ -8,7 +8,7 @@ use std::{
     io::{Error, ErrorKind},
     os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd},
     pin::Pin,
-    task::Poll,
+    task::{Poll, ready},
 };
 
 /**
@@ -146,11 +146,7 @@ impl<T: AsRawFd, Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error> +
     type Output = Result<Output, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let events = self.fd.poll_ready(cx);
-        if events.is_empty() {
-            return Poll::Pending;
-        }
-
+        let events = ready!(self.fd.poll_ready(cx));
         let Self { fd, func, .. } = self.get_mut();
         match func(fd, events) {
             Result::Err(e) if e.kind() == ErrorKind::WouldBlock => Poll::Pending,
