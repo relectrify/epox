@@ -3,7 +3,7 @@ use std::{
     io::{Error, ErrorKind},
     os::fd::{AsRawFd, BorrowedFd},
     pin::Pin,
-    task::Poll,
+    task::{Poll, ready},
 };
 
 /**
@@ -41,9 +41,7 @@ impl<T: AsRawFd> futures_io::AsyncRead for AsyncReadFd<T> {
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
-        if self.inner.poll_ready(cx).is_empty() {
-            return Poll::Pending;
-        }
+        ready!(self.inner.poll_ready(cx));
 
         /* safety: we already know the fd is valid */
         let num_read = nix::unistd::read(
