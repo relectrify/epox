@@ -62,7 +62,7 @@ pub struct AsyncWriteFd<T: AsRawFd> {
 impl<T: AsRawFd> AsyncWriteFd<T> {
     pub fn new(inner: T) -> Result<Self, std::io::Error> {
         Ok(Self {
-            inner: Fd::new(inner, EpollFlags::EPOLLOUT)?,
+            inner: Fd::new(inner, EpollFlags::EPOLLOUT | EpollFlags::EPOLLET)?,
         })
     }
 }
@@ -87,16 +87,19 @@ impl<T: AsRawFd> futures_io::AsyncWrite for AsyncWriteFd<T> {
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        if self.inner.poll_ready(cx).is_empty() {
-            return Poll::Pending;
+        /* write needs to be in a loop because in theory it can return
+         * EWOULDBLOCK multiple times in a row if something else is writing to
+         * the same kernel object backing the file descriptor */
+        loop {
+            /* safety: we already know the fd is valid */
+            match nix::unistd::write(
+                unsafe { BorrowedFd::borrow_raw(self.inner.as_raw_fd()) },
+                buf,
+            ) {
+                Err(nix::errno::Errno::EWOULDBLOCK) => ready!(self.inner.poll_ready(cx)),
+                res => return Poll::Ready(res.map_err(Into::into)),
+            };
         }
-
-        /* safety: we already know the fd is valid */
-        let num_wrote = nix::unistd::write(
-            unsafe { BorrowedFd::borrow_raw(self.inner.as_raw_fd()) },
-            buf,
-        )?;
-        Poll::Ready(Ok(num_wrote))
     }
 
     fn poll_flush(
