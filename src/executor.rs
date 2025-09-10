@@ -254,11 +254,13 @@ impl EpollWaker {
      * Check if this EpollWaker instance has had any events since it was
      * last polled.
      */
-    pub fn poll(&mut self, cx: &std::task::Context<'_>) -> EpollFlags {
+    pub fn poll(&mut self, cx: &std::task::Context<'_>) -> Poll<EpollFlags> {
+        self.waker.clone_from(cx.waker());
         if self.events.is_empty() {
-            self.waker.clone_from(cx.waker());
+            Poll::Pending
+        } else {
+            Poll::Ready(std::mem::replace(&mut self.events, EpollFlags::empty()))
         }
-        std::mem::replace(&mut self.events, EpollFlags::empty())
     }
 }
 
