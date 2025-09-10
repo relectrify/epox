@@ -43,7 +43,7 @@ impl<T: AsRawFd> Fd<T> {
         FdFuture { fd: self }
     }
 
-    pub fn poll_ready(&self, cx: &std::task::Context<'_>) -> EpollFlags {
+    pub fn poll_ready(&self, cx: &std::task::Context<'_>) -> Poll<EpollFlags> {
         self.ew.borrow_mut().poll(cx)
     }
 
@@ -88,11 +88,7 @@ impl<T: AsRawFd> Future for FdFuture<'_, T> {
     type Output = EpollFlags;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        const EMPTY: EpollFlags = EpollFlags::empty();
-        match self.fd.ew.borrow_mut().poll(cx) {
-            EMPTY => Poll::Pending,
-            events => Poll::Ready(events),
-        }
+        self.fd.ew.borrow_mut().poll(cx)
     }
 }
 
