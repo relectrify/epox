@@ -28,7 +28,7 @@ pub struct Task<T, F: Future<Output = T>> {
 }
 
 impl<T, F: Future<Output = T>> Task<T, F> {
-    pub(crate) fn new(future: F, priority: Priority) -> Self {
+    pub fn new(future: F, priority: Priority) -> Self {
         Self {
             pending: true,
             priority,
@@ -154,4 +154,14 @@ impl Future for YieldFuture {
             Poll::Pending
         }
     }
+}
+
+/**
+ * Yield control to the executor.
+ *
+ * The executor will check for epoll events, then poll all tasks of
+ * equal or higher priority before polling the calling task again.
+ */
+pub async fn yield_now() {
+    YieldFuture::new().await;
 }
