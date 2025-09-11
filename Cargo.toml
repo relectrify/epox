@@ -3,6 +3,10 @@ name = "epox"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+nightly = []
+
 [dependencies]
 nix = { version = "0.30", features = ["event", "fs", "signal", "time"] }
 futures-io = "0.3"

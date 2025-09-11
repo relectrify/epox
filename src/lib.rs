@@ -1,7 +1,13 @@
+//! # Features
+//!
+//! `nightly`: enable features that require a nightly toolchain
+
+#![cfg_attr(feature = "nightly", feature(never_type))]
+
 pub mod signal;
 pub mod timer;
 
-pub use executor::{Priority, run, spawn, spawn_with_priority};
+pub use executor::{Priority, run, shutdown, spawn, spawn_with_priority};
 pub use fd::Fd;
 pub use nix::sys::epoll::EpollFlags;
 pub use signal::AsyncSignal;

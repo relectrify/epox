@@ -59,7 +59,10 @@ impl<T: AsRawFd> Drop for Fd<T> {
     fn drop(&mut self) {
         /* safety: fd stays open for the duration of the borrow */
         let fd = unsafe { BorrowedFd::borrow_raw(self.inner.as_raw_fd()) };
-        EXECUTOR.with(|e| e.epoll_del(fd)).unwrap();
+        // ignore errors - if we're being dropped after the epoll fd has closed this
+        // will fail
+        // this is expected and will happen after Executor::shutdown() is called
+        let _ = EXECUTOR.with(|e| e.epoll_del(fd));
     }
 }
 
