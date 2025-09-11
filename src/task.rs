@@ -104,6 +104,7 @@ impl<T: 'static, F: Future<Output = T> + 'static> Handle<T, F> {
         }
     }
 
+    #[must_use]
     pub fn result(&self) -> Option<T> {
         let r = self.task.borrow();
         let task: std::cell::Ref<'_, Task<T, F>> =
@@ -137,6 +138,7 @@ pub struct YieldFuture {
 }
 
 impl YieldFuture {
+    #[must_use]
     pub const fn new() -> Self {
         Self { yielded: false }
     }
