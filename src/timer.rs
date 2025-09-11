@@ -1,4 +1,7 @@
-use crate::{EpollFlags, Fd, fd::AsFdWrapper};
+use crate::{
+    EpollFlags,
+    fd::{AsFdWrapper, Fd},
+};
 pub use nix::sys::timerfd::Expiration;
 use nix::sys::timerfd::{ClockId, TimerFd, TimerFlags, TimerSetTimeFlags};
 use std::{io::Error, os::fd::AsFd};
