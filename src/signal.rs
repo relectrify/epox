@@ -9,7 +9,6 @@ use std::{io::Error, os::fd::AsFd};
 pub struct AsyncSignal {
     fd: Fd<SignalFd>,
     sigset: SigSet,
-    _not_send_not_sync: core::marker::PhantomData<*mut ()>,
 }
 
 /**
@@ -44,7 +43,6 @@ impl AsyncSignal {
         Ok(Self {
             fd: Fd::new(signalfd, nix::sys::epoll::EpollFlags::EPOLLIN)?,
             sigset,
-            _not_send_not_sync: core::marker::PhantomData,
         })
     }
 
