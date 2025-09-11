@@ -11,6 +11,9 @@ nightly = []
 nix = { version = "0.30", features = ["event", "fs", "signal", "time"] }
 futures-io = "0.3"
 
+[build-dependencies]
+rustc_version = "0.4"
+
 [dev-dependencies]
 serialport = "4"
 clap = { version = "4", features = ["derive"] }
