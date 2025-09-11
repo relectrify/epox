@@ -2,7 +2,7 @@ use crate::{task, task::Task};
 use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout};
 use std::{
     any::Any,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     io::Error,
     marker::PhantomData,
     os::fd::AsFd,
@@ -67,7 +67,7 @@ pub(crate) struct Executor {
      * woken. Either way, they need to be polled. */
     runq: [RefCell<Vec<TaskRef>>; 3],
     events: RefCell<Vec<EpollEvent>>,
-    task_yielded: RefCell<bool>,
+    task_yielded: Cell<bool>,
     _not_send_not_sync: PhantomData<*mut ()>,
 }
 
@@ -77,7 +77,7 @@ impl Executor {
             epoll: Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)?,
             runq: std::array::from_fn(|_| RefCell::new(Vec::new())),
             events: RefCell::new(Vec::new()),
-            task_yielded: RefCell::new(false),
+            task_yielded: Cell::new(false),
             _not_send_not_sync: PhantomData,
         })
     }
@@ -97,7 +97,7 @@ impl Executor {
             let mut pending = false;
             while let Some(q) = self.highest_priority_non_empty_runq() {
                 let t = q.borrow_mut().pop().unwrap();
-                *self.task_yielded.borrow_mut() = false;
+                self.task_yielded.set(false);
                 {
                     /* poll the task */
                     let waker = build_task_waker(t.clone());
@@ -108,7 +108,7 @@ impl Executor {
                     let mut t = unsafe { Pin::new_unchecked(&mut *t) };
                     pending = t.as_mut().poll(&mut cx) == Poll::Pending || pending;
                 }
-                if *self.task_yielded.borrow() {
+                if self.task_yielded.get() {
                     /* task yielded: insert task at the front of the queue so
                      * that all other tasks run before it */
                     let priority = t.borrow().priority();
@@ -129,7 +129,7 @@ impl Executor {
     }
 
     pub(crate) fn yield_now(&self) {
-        *self.task_yielded.borrow_mut() = true;
+        self.task_yielded.set(true);
     }
 
     pub(crate) fn epoll_add(
