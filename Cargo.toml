@@ -23,6 +23,7 @@ pedantic = "warn"
 
 cognitive_complexity = { level = "allow", priority = 1 }
 future_not_send = { level = "allow", priority = 1 }
+new_without_default = { level = "allow", priority = 1 }
 option_if_let_else = { level = "allow", priority = 1 }
 redundant_pub_crate = { level = "allow", priority = 1 }
 significant_drop_tightening = { level = "allow", priority = 1 }
