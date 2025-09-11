@@ -1,14 +1,13 @@
 use crate::{EpollFlags, Fd, fd::AsFdWrapper};
 pub use nix::sys::timerfd::Expiration;
 use nix::sys::timerfd::{ClockId, TimerFd, TimerFlags, TimerSetTimeFlags};
-use std::{io::Error, marker::PhantomData, os::fd::AsFd};
+use std::{io::Error, os::fd::AsFd};
 
 /*
  * Timer
  */
 pub struct Timer {
     fd: Fd<AsFdWrapper<TimerFd>>,
-    _not_send_not_sync: PhantomData<*mut ()>,
 }
 
 impl Timer {
@@ -16,7 +15,6 @@ impl Timer {
         let fd = TimerFd::new(ClockId::CLOCK_MONOTONIC, TimerFlags::TFD_CLOEXEC)?;
         Ok(Self {
             fd: Fd::new(AsFdWrapper::new(fd), EpollFlags::EPOLLIN)?,
-            _not_send_not_sync: PhantomData,
         })
     }
 

@@ -247,6 +247,7 @@ fn build_task_waker(task: TaskRef) -> Waker {
 pub struct EpollWaker {
     waker: Waker,
     events: EpollFlags,
+    _not_send_not_sync: core::marker::PhantomData<*mut ()>,
 }
 
 impl EpollWaker {
@@ -269,6 +270,7 @@ impl Default for EpollWaker {
         Self {
             waker: Waker::noop().clone(),
             events: EpollFlags::empty(),
+            _not_send_not_sync: core::marker::PhantomData,
         }
     }
 }
