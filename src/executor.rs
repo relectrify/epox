@@ -62,7 +62,7 @@ impl std::ops::IndexMut<Priority> for [RefCell<Vec<TaskRef>>; 3] {
  * Executor
  */
 pub(crate) struct Executor {
-    epoll: Epoll,
+    epoll: RefCell<Epoll>,
     /* All tasks in the runq have either been newly spawned or have have been
      * woken. Either way, they need to be polled. */
     runq: [RefCell<Vec<TaskRef>>; 3],
@@ -71,10 +71,14 @@ pub(crate) struct Executor {
     _not_send_not_sync: PhantomData<*mut ()>,
 }
 
+fn create_epoll() -> Result<Epoll, Error> {
+    Ok(Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)?)
+}
+
 impl Executor {
     fn new() -> Result<Self, Error> {
         Ok(Self {
-            epoll: Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)?,
+            epoll: RefCell::new(create_epoll()?),
             runq: std::array::from_fn(|_| RefCell::new(Vec::new())),
             events: RefCell::new(Vec::new()),
             task_yielded: Cell::new(false),
@@ -139,7 +143,7 @@ impl Executor {
         ew: Pin<&RefCell<EpollWaker>>,
     ) -> Result<(), Error> {
         self.events.borrow_mut().push(EpollEvent::empty());
-        self.epoll.add(
+        self.epoll.borrow().add(
             fd,
             EpollEvent::new(
                 events,
@@ -152,7 +156,7 @@ impl Executor {
 
     pub(crate) fn epoll_del(&self, fd: impl AsFd) -> Result<(), Error> {
         self.events.borrow_mut().pop();
-        self.epoll.delete(fd)?;
+        self.epoll.borrow().delete(fd)?;
         Ok(())
     }
 
@@ -162,6 +166,7 @@ impl Executor {
         }
         let n_events = self
             .epoll
+            .borrow()
             .wait(self.events.borrow_mut().as_mut_slice(), timeout)?;
         /* wakeup futures which have an event, adding them to runq */
         for e in &self.events.borrow()[0..n_events] {
@@ -193,6 +198,15 @@ impl Executor {
             return Some(&self.runq[Priority::Low]);
         }
         None
+    }
+
+    fn shutdown(&self) {
+        while let Some(queue) = self.highest_priority_non_empty_runq() {
+            queue.borrow_mut().clear();
+        }
+        self.events.borrow_mut().clear();
+        // old epoll will close on drop
+        self.epoll.replace_with(|_| create_epoll().unwrap());
     }
 }
 
@@ -309,4 +323,57 @@ pub fn spawn_with_priority<T: 'static, F: Future<Output = T> + 'static>(
  */
 pub fn run() -> Result<(), std::io::Error> {
     EXECUTOR.with(|e| e.run())
+}
+
+/**
+ * Removes all pending tasks from the executor and returns control to the
+ * caller.
+ *
+ * This will cause [`epox::run()`] to return as soon as control is returned
+ * to the executor.
+ *
+ * If you _don't_ need to return a value from the task that shuts down the
+ * executor, you should probably use [`shutdown()`].
+ *
+ * # Safety
+ *
+ * Callers __should not__ call `.await` after calling this function. This
+ * will return control to the executor which __will not__ wake previously
+ * registered tasks.
+ *
+ * [`epox::run()`]: run
+ */
+pub unsafe fn shutdown_executor_unchecked() {
+    EXECUTOR.with(|e| e.shutdown());
+}
+
+/**
+ * Stop the executor, deregistering all tasks.
+ *
+ * All tasks, including the current task, will be stopped once this future
+ * is polled.
+ *
+ * The [`task::Handle`] of the current task _will not_ contain a result.
+ * Tasks that need to shut down the executor _and_ return a value should
+ * call [`shutdown_executor_unchecked()`].
+ */
+pub const fn shutdown() -> Shutdown {
+    Shutdown { _private: () }
+}
+
+#[must_use]
+pub struct Shutdown {
+    _private: (),
+}
+
+impl Future for Shutdown {
+    #[cfg(feature = "nightly")]
+    type Output = !;
+    #[cfg(not(feature = "nightly"))]
+    type Output = std::convert::Infallible;
+
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+        unsafe { shutdown_executor_unchecked() };
+        Poll::Pending
+    }
 }
