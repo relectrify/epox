@@ -13,6 +13,10 @@ clap = { version = "4", features = ["derive"] }
 futures-lite = "2"
 futures = "0"
 
+[lints.rust]
+unreachable-pub = "warn"
+unnameable-types = "warn"
+
 [lints.clippy]
 nursery = "warn"
 pedantic = "warn"

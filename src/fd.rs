@@ -80,6 +80,7 @@ impl<T: AsRawFd> std::ops::DerefMut for Fd<T> {
 /*
  * FdFuture
  */
+#[doc(hidden)]
 pub struct FdFuture<'a, T: AsRawFd> {
     fd: &'a mut Fd<T>,
 }
@@ -130,6 +131,7 @@ impl<T: AsFd> std::ops::DerefMut for AsFdWrapper<T> {
 /*
  * FdWithFuture
  */
+#[doc(hidden)]
 pub struct FdWithFuture<
     'a,
     T: AsRawFd,

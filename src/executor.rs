@@ -1,4 +1,4 @@
-use crate::{Priority, Task};
+use crate::{task, task::Task};
 use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout};
 use std::{
     any::Any,
@@ -14,7 +14,7 @@ use std::{
 /**
  * A type erased task.
  */
-pub trait AnyTask {
+pub(crate) trait AnyTask {
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<()>;
     fn priority(&self) -> Priority;
     fn set_pending(&mut self);
@@ -26,7 +26,7 @@ thread_local! {
     /**
      * Each thread gets a thread local executor which owns an epoll instance.
      */
-    pub static EXECUTOR: Executor = Executor::new().unwrap();
+    pub(crate) static EXECUTOR: Executor = Executor::new().unwrap();
 }
 
 /*
@@ -61,7 +61,7 @@ impl std::ops::IndexMut<Priority> for [RefCell<Vec<TaskRef>>; 3] {
 /**
  * Executor
  */
-pub struct Executor {
+pub(crate) struct Executor {
     epoll: Epoll,
     /* All tasks in the runq have either been newly spawned or have have been
      * woken. Either way, they need to be polled. */
@@ -82,7 +82,7 @@ impl Executor {
         })
     }
 
-    pub fn spawn<T: 'static, F: Future<Output = T> + 'static>(
+    fn spawn<T: 'static, F: Future<Output = T> + 'static>(
         &self,
         future: F,
         priority: Priority,
@@ -92,7 +92,7 @@ impl Executor {
         crate::task::Handle::new(task)
     }
 
-    pub fn run(&self) -> Result<(), Error> {
+    fn run(&self) -> Result<(), Error> {
         loop {
             let mut pending = false;
             while let Some(q) = self.highest_priority_non_empty_runq() {
@@ -128,11 +128,11 @@ impl Executor {
         Ok(())
     }
 
-    pub fn yield_now(&self) {
+    pub(crate) fn yield_now(&self) {
         *self.task_yielded.borrow_mut() = true;
     }
 
-    pub fn epoll_add(
+    pub(crate) fn epoll_add(
         &self,
         fd: impl AsFd,
         events: EpollFlags,
@@ -150,7 +150,7 @@ impl Executor {
         Ok(())
     }
 
-    pub fn epoll_del(&self, fd: impl AsFd) -> Result<(), Error> {
+    pub(crate) fn epoll_del(&self, fd: impl AsFd) -> Result<(), Error> {
         self.events.borrow_mut().pop();
         self.epoll.delete(fd)?;
         Ok(())
@@ -244,7 +244,7 @@ fn build_task_waker(task: TaskRef) -> Waker {
  * All events registered with epoll hold a reference to an EpollWaker in
  * their associated data.
  */
-pub struct EpollWaker {
+pub(crate) struct EpollWaker {
     waker: Waker,
     events: EpollFlags,
     _not_send_not_sync: core::marker::PhantomData<*mut ()>,
@@ -255,7 +255,7 @@ impl EpollWaker {
      * Check if this EpollWaker instance has had any events since it was
      * last polled.
      */
-    pub fn poll(&mut self, cx: &std::task::Context<'_>) -> Poll<EpollFlags> {
+    pub(crate) fn poll(&mut self, cx: &std::task::Context<'_>) -> Poll<EpollFlags> {
         self.waker.clone_from(cx.waker());
         if self.events.is_empty() {
             Poll::Pending
@@ -273,4 +273,40 @@ impl Default for EpollWaker {
             _not_send_not_sync: core::marker::PhantomData,
         }
     }
+}
+
+/**
+ * Task priority.
+ *
+ * Tasks are run from high to low priority.
+ */
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Priority {
+    High,
+    Normal,
+    Low,
+}
+
+/**
+ * Spawn a task on the thread local executor with normal priority.
+ */
+pub fn spawn<T: 'static, F: Future<Output = T> + 'static>(future: F) -> task::Handle<T, F> {
+    EXECUTOR.with(|e| e.spawn(future, Priority::Normal))
+}
+
+/**
+ * Spawn a task on the thread local executor with [`Priority`] priority.
+ */
+pub fn spawn_with_priority<T: 'static, F: Future<Output = T> + 'static>(
+    future: F,
+    priority: Priority,
+) -> task::Handle<T, F> {
+    EXECUTOR.with(|e| e.spawn(future, priority))
+}
+
+/**
+ * Run the thread local executor until no futures are pending.
+ */
+pub fn run() -> Result<(), std::io::Error> {
+    EXECUTOR.with(|e| e.run())
 }
