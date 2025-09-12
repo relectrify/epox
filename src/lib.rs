@@ -7,7 +7,9 @@
 pub mod signal;
 pub mod timer;
 
-pub use executor::{Priority, run, shutdown, spawn, spawn_with_priority};
+pub use executor::{
+    Priority, run, shutdown, spawn, spawn_checked, spawn_checked_with_priority, spawn_with_priority,
+};
 pub use fd::Fd;
 pub use nix::sys::epoll::EpollFlags;
 pub use signal::AsyncSignal;
