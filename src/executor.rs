@@ -302,6 +302,43 @@ pub enum Priority {
 }
 
 /**
+ * Spawn a task on the thread local executor with normal priority that will
+ * stop the executor if it returns [`Err`]
+ *
+ * See [spawn_checked_with_priority].
+ */
+pub fn spawn_checked<T: 'static, E: 'static, F: Future<Output = Result<T, E>> + 'static>(
+    future: F,
+) -> task::Handle<Result<T, E>, impl Future<Output = Result<T, E>>> {
+    spawn_checked_with_priority(future, Priority::Normal)
+}
+
+/**
+ * Spawn a task on the thread local executor with [`Priority`] priority that
+ * will stop the executor if it returns [`Err`].
+ *
+ * This is a wrapper over [`spawn_with_priority`] that calls
+ * [`shutdown_executor_unchecked()`] if the spawned future returns [`Err`].
+ */
+pub fn spawn_checked_with_priority<
+    T: 'static,
+    E: 'static,
+    F: Future<Output = Result<T, E>> + 'static,
+>(
+    future: F,
+    priority: Priority,
+) -> task::Handle<Result<T, E>, impl Future<Output = Result<T, E>>> {
+    spawn_with_priority(
+        async move {
+            future
+                .await
+                .inspect_err(|_| unsafe { shutdown_executor_unchecked() })
+        },
+        priority,
+    )
+}
+
+/**
  * Spawn a task on the thread local executor with normal priority.
  */
 pub fn spawn<T: 'static, F: Future<Output = T> + 'static>(future: F) -> task::Handle<T, F> {
