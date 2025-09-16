@@ -1,6 +1,6 @@
 use crate::{
     Priority,
-    executor::{AnyTask, EXECUTOR, TaskRef},
+    executor::{AnyTask, TaskRef, exec},
     queue::QueueEntry,
 };
 use std::{
@@ -150,7 +150,7 @@ impl Future for YieldFuture {
             Poll::Ready(())
         } else {
             self.get_mut().yielded = true;
-            EXECUTOR.with(|e| e.yield_now());
+            exec(|mut e| e.yield_now());
             Poll::Pending
         }
     }
