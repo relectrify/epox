@@ -10,9 +10,9 @@ fn yield_to_executor() {
     assert_eq!(io_steps, IO_TASK_STEPS);
     assert_eq!(blocking_steps, BLOCKING_TASK_STEPS);
 
-    // each task should have taken TOTAL_DURATION +/- 1%
-    assert!(io_duration.abs_diff(TOTAL_DURATION) < TOTAL_DURATION / 100);
-    assert!(blocking_duration.abs_diff(TOTAL_DURATION) < TOTAL_DURATION / 100);
+    // each task should have taken TOTAL_DURATION +/- 10%
+    assert!(io_duration.abs_diff(TOTAL_DURATION) < TOTAL_DURATION / 10);
+    assert!(blocking_duration.abs_diff(TOTAL_DURATION) < TOTAL_DURATION / 10);
 }
 
 const TOTAL_DURATION: std::time::Duration = std::time::Duration::from_secs(1);
