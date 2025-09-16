@@ -1,6 +1,7 @@
 use crate::{
     Priority,
     executor::{AnyTask, EXECUTOR, TaskRef},
+    queue::QueueEntry,
 };
 use std::{
     any::Any,
@@ -13,13 +14,13 @@ use std::{
 /**
  * A task stores a future.
  *
- * Why repr(C)? So that the pending flag is at the same offset for all
- * tasks, meaning that the generated implementations of {set,take}_pending
- * can be shared between all instances of Task.
+ * Why repr(C)? So that the queue_entry, priority and waker members are at
+ * the same offset for all tasks, meaning that the generated implementations
+ * of common functions can be shared between all instances of Task.
  */
 #[repr(C)]
 pub struct Task<T, F: Future<Output = T>> {
-    pending: bool,
+    queue_entry: QueueEntry,
     priority: Priority,
     waker: Cell<Waker>,
     future: F,
@@ -30,7 +31,7 @@ pub struct Task<T, F: Future<Output = T>> {
 impl<T, F: Future<Output = T>> Task<T, F> {
     pub fn new(future: F, priority: Priority) -> Self {
         Self {
-            pending: true,
+            queue_entry: QueueEntry::new(),
             priority,
             waker: Cell::new(Waker::noop().clone()),
             future,
@@ -73,12 +74,9 @@ impl<T: 'static, F: Future<Output = T> + 'static> AnyTask for Task<T, F> {
         self.priority
     }
 
-    fn set_pending(&mut self) {
-        self.pending = true;
-    }
-
-    fn take_pending(&mut self) -> bool {
-        std::mem::replace(&mut self.pending, false)
+    fn queue_entry(self: Pin<&mut Self>) -> Pin<&mut QueueEntry> {
+        /* safety: self is pinned therefore self.queue_entry is pinned */
+        unsafe { self.map_unchecked_mut(|s| &mut s.queue_entry) }
     }
 
     fn as_any(&self) -> &dyn Any {
