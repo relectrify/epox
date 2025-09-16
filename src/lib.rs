@@ -1,7 +1,6 @@
 //! # Features
 //!
 //! `nightly`: enable features that require a nightly toolchain
-
 #![cfg_attr(feature = "nightly", feature(never_type))]
 
 pub mod signal;
