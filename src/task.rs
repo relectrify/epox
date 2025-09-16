@@ -86,8 +86,10 @@ impl<T: 'static, F: Future<Output = T> + 'static> AnyTask for Task<T, F> {
     }
 }
 
-/*
- * Handle
+/**
+ * A handle to a task.
+ *
+ * Used to get the result (return value) of a task.
  */
 pub struct Handle<T, F> {
     task: TaskRef,
