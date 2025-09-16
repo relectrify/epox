@@ -51,6 +51,7 @@ pub(crate) type TaskRef = Pin<Rc<TaskBox>>;
 impl Queueable for TaskBox {
     fn with_entry<F: FnMut(Pin<&mut QueueEntry>)>(self: Pin<&Self>, mut f: F) {
         let mut s = self.borrow_mut();
+        /* safety: self is pinned therefore borrowed self is also pinned */
         let s = unsafe { Pin::new_unchecked(&mut *s) };
         f(s.queue_entry());
     }
@@ -61,9 +62,16 @@ impl Queueable for TaskBox {
  */
 #[derive(Clone, Copy)]
 enum TaskControlFlow {
+    /* handle task according to Poll::Pending or Poll::Ready */
     Normal,
+    /* task has yielded */
     Yield,
+    /* task has asked to  shutdown the executor */
     Shutdown,
+}
+
+fn create_epoll() -> Result<Epoll, Error> {
+    Ok(Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)?)
 }
 
 /**
@@ -72,23 +80,20 @@ enum TaskControlFlow {
 #[pin_project]
 pub(crate) struct Executor {
     epoll: Epoll,
-    /* All tasks in the runq have either been newly spawned or have have been
-     * woken. Either way, they need to be polled. */
+    /* All tasks in the run queues have either been newly spawned or have have
+     * been woken. Either way, they need to be polled. */
     #[pin]
     runq_high: Queue<TaskBox>,
     #[pin]
     runq_normal: Queue<TaskBox>,
     #[pin]
     runq_low: Queue<TaskBox>,
+    /* Tasks in the sleep queue are pending. */
     #[pin]
     sleepq: Queue<TaskBox>,
     events: Vec<EpollEvent>,
     task_control_flow: TaskControlFlow,
     _not_send_not_sync: PhantomData<*mut ()>,
-}
-
-fn create_epoll() -> Result<Epoll, Error> {
-    Ok(Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)?)
 }
 
 impl Executor {
