@@ -152,7 +152,7 @@ impl Future for YieldFuture {
             Poll::Ready(())
         } else {
             self.get_mut().yielded = true;
-            exec(|mut e| e.yield_now());
+            exec(|e| e.yield_now());
             Poll::Pending
         }
     }

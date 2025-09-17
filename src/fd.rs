@@ -35,7 +35,7 @@ impl<T: AsRawFd> Fd<T> {
             inner,
             ew: Box::pin(RefCell::new(EpollWaker::default())),
         };
-        exec(|mut e| e.epoll_add(fd, events, s.ew.as_ref()))?;
+        exec(|e| e.epoll_add(fd, events, s.ew.as_ref()))?;
         Ok(s)
     }
 
@@ -62,7 +62,7 @@ impl<T: AsRawFd> Drop for Fd<T> {
         // ignore errors - if we're being dropped after the epoll fd has closed this
         // will fail
         // this is expected and will happen after Executor::shutdown() is called
-        let _ = exec(|mut e| e.epoll_del(fd));
+        let _ = exec(|e| e.epoll_del(fd));
     }
 }
 
