@@ -1,4 +1,8 @@
-use std::{marker::PhantomData, pin::Pin, rc::Rc};
+use std::{
+    marker::{PhantomData, PhantomPinned},
+    pin::Pin,
+    rc::Rc,
+};
 
 /**
  * A queue based on an intrusive list.
@@ -46,7 +50,7 @@ impl<T: Queueable> Queue<T> {
     pub(crate) fn pop(self: Pin<&mut Self>) -> Option<Pin<Rc<T>>> {
         (!self.is_empty()).then(|| {
             /* get last entry */
-            let mut entry = Pin::new(unsafe { &mut *self.head.prev });
+            let mut entry = unsafe { Pin::new_unchecked(&mut *self.head.prev) };
             /* remove it from the list */
             entry.as_mut().unqueue();
             /* reconstruct reference */
@@ -66,6 +70,7 @@ pub(crate) struct QueueEntry {
     /* TODO: we only need to store an outer pointer because we have a boxed
      * value inside the Rc. When we ThinRc we can remove this. */
     outer: *const (),
+    _pinned: PhantomPinned,
 }
 
 impl QueueEntry {
@@ -74,6 +79,7 @@ impl QueueEntry {
             prev: Default::default(),
             next: Default::default(),
             outer: Default::default(),
+            _pinned: PhantomPinned,
         }
     }
 

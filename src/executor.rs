@@ -123,27 +123,30 @@ impl Executor {
         crate::task::Handle::new(task)
     }
 
-    pub(crate) const fn yield_now(&mut self) {
-        self.task_control_flow = TaskControlFlow::Yield;
+    pub(crate) fn yield_now(self: Pin<&mut Self>) {
+        let this = self.project();
+        *this.task_control_flow = TaskControlFlow::Yield;
     }
 
     pub(crate) fn epoll_add(
-        &mut self,
+        self: Pin<&mut Self>,
         fd: impl AsFd,
         events: EpollFlags,
         ew: Pin<&RefCell<EpollWaker>>,
     ) -> Result<(), Error> {
-        self.events.push(EpollEvent::empty());
-        self.epoll.add(
+        let this = self.project();
+        this.events.push(EpollEvent::empty());
+        this.epoll.add(
             fd,
             EpollEvent::new(events, std::ptr::from_ref(Pin::into_inner(ew)) as _),
         )?;
         Ok(())
     }
 
-    pub(crate) fn epoll_del(&mut self, fd: impl AsFd) -> Result<(), Error> {
-        self.events.pop();
-        self.epoll.delete(fd)?;
+    pub(crate) fn epoll_del(self: Pin<&mut Self>, fd: impl AsFd) -> Result<(), Error> {
+        let this = self.project();
+        this.events.pop();
+        this.epoll.delete(fd)?;
         Ok(())
     }
 
@@ -161,12 +164,12 @@ impl Executor {
             return Ok(());
         }
         let n_events = {
-            let borrow = self.as_mut().get_mut();
-            borrow.epoll.wait(borrow.events.as_mut_slice(), timeout)
+            let this = self.as_mut().project();
+            this.epoll.wait(this.events.as_mut_slice(), timeout)
         }?;
         /* wakeup futures which have an event, adding them to runq */
         for ei in 0..n_events {
-            let e = self.as_ref().events[ei];
+            let e = self.events[ei];
             /* safety: e.data() is the result of std::ptr::from_ref(Pin::into_inner) */
             let ew = Pin::new(unsafe { &*(e.data() as *mut RefCell<EpollWaker>) });
             let mut waker = ew.borrow_mut();
@@ -197,8 +200,8 @@ impl Executor {
             .or_else(|| this.runq_low.pop())
     }
 
-    const fn shutdown(&mut self) {
-        self.task_control_flow = TaskControlFlow::Shutdown;
+    fn shutdown(self: Pin<&mut Self>) {
+        *self.project().task_control_flow = TaskControlFlow::Shutdown;
     }
 }
 
@@ -340,7 +343,7 @@ pub fn spawn_with_priority<T: 'static, F: Future<Output = T> + 'static>(
 pub fn run() -> Result<(), std::io::Error> {
     loop {
         while let Some(t) = exec(|mut e| {
-            e.task_control_flow = TaskControlFlow::Normal;
+            *e.as_mut().project().task_control_flow = TaskControlFlow::Normal;
             e.highest_priority_runnable_task()
         }) {
             let pending = {
@@ -370,8 +373,8 @@ pub fn run() -> Result<(), std::io::Error> {
                         /* clear all state */
                         while e.as_mut().highest_priority_runnable_task().is_some() {}
                         while e.as_mut().project().sleepq.pop().is_some() {}
-                        e.events.clear();
-                        e.epoll = create_epoll()?;
+                        e.as_mut().project().events.clear();
+                        *e.as_mut().project().epoll = create_epoll()?;
                     }
                 }
                 Ok::<(), std::io::Error>(())
@@ -407,7 +410,7 @@ pub fn run() -> Result<(), std::io::Error> {
  * [`epox::run()`]: run
  */
 pub unsafe fn shutdown_executor_unchecked() {
-    exec(|mut e| e.shutdown());
+    exec(|e| e.shutdown());
 }
 
 /**
