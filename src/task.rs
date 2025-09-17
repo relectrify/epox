@@ -3,6 +3,7 @@ use crate::{
     executor::{AnyTask, TaskRef, exec},
     queue::QueueEntry,
 };
+use pin_project::pin_project;
 use std::{
     any::Any,
     cell::Cell,
@@ -18,11 +19,14 @@ use std::{
  * the same offset for all tasks, meaning that the generated implementations
  * of common functions can be shared between all instances of Task.
  */
+#[pin_project]
 #[repr(C)]
 pub struct Task<T, F: Future<Output = T>> {
+    #[pin]
     queue_entry: QueueEntry,
     priority: Priority,
     waker: Cell<Waker>,
+    #[pin]
     future: F,
     result: Cell<Option<T>>,
     _not_send_not_sync: PhantomData<*mut ()>,
@@ -41,8 +45,7 @@ impl<T, F: Future<Output = T>> Task<T, F> {
     }
 
     fn future(self: Pin<&mut Self>) -> Pin<&mut F> {
-        /* safety: self is pinned therefore self.future is pinned */
-        unsafe { self.map_unchecked_mut(|s| &mut s.future) }
+        self.project().future
     }
 
     fn ready(self: Pin<&mut Self>, result: T) {
@@ -75,8 +78,7 @@ impl<T: 'static, F: Future<Output = T> + 'static> AnyTask for Task<T, F> {
     }
 
     fn queue_entry(self: Pin<&mut Self>) -> Pin<&mut QueueEntry> {
-        /* safety: self is pinned therefore self.queue_entry is pinned */
-        unsafe { self.map_unchecked_mut(|s| &mut s.queue_entry) }
+        self.project().queue_entry
     }
 
     fn as_any(&self) -> &dyn Any {
