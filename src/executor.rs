@@ -367,30 +367,34 @@ pub fn run() -> Result<(), std::io::Error> {
                 let mut cx = Context::from_waker(&waker);
                 t.poll(&mut cx) == Poll::Pending
             };
-            exec(|mut e| {
-                match e.task_control_flow {
-                    TaskControlFlow::Normal => {
-                        if pending {
-                            /* task pending: put it on the sleep queue */
-                            e.sleep(t);
-                        }
+
+            match exec(|e| e.task_control_flow) {
+                TaskControlFlow::Normal => {
+                    if pending {
+                        /* task pending: put it on the sleep queue */
+                        exec(|e| e.sleep(t));
                     }
-                    TaskControlFlow::Yield => {
+                }
+                TaskControlFlow::Yield => {
+                    exec(|mut e| {
                         /* check for events */
                         e.as_mut().epoll_wait(EpollTimeout::ZERO)?;
                         /* task yielded: put it back on a run queue */
                         e.enqueue(t);
-                    }
-                    TaskControlFlow::Shutdown => {
+                        Ok::<_, std::io::Error>(())
+                    })?;
+                }
+                TaskControlFlow::Shutdown => {
+                    exec(|mut e| {
                         /* clear all state */
                         while e.as_mut().highest_priority_runnable_task().is_some() {}
                         while e.as_mut().project().sleepq.pop().is_some() {}
                         e.as_mut().project().events.clear();
                         *e.as_mut().project().epoll = create_epoll()?;
-                    }
+                        Ok::<(), std::io::Error>(())
+                    })?;
                 }
-                Ok::<(), std::io::Error>(())
-            })?;
+            }
         }
         if exec(|e| e.sleepq.is_empty()) {
             /* all tasks have completed */
