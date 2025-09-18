@@ -123,7 +123,9 @@ impl Executor {
         future: F,
         priority: Priority,
     ) -> crate::task::Handle<T, F> {
-        let task: TaskRef = Rc::pin(Box::new(RefCell::new(Task::new(future, priority))));
+        let task = Rc::pin(TaskBox::from(Box::new(RefCell::new(Task::new(
+            future, priority,
+        )))));
         self.enqueue(task.clone());
         crate::task::Handle::new(task)
     }
