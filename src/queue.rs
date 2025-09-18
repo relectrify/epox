@@ -63,6 +63,13 @@ impl<T: Queueable> Queue<T> {
     }
 }
 
+impl<T: Queueable> Drop for Queue<T> {
+    fn drop(&mut self) {
+        let mut this = unsafe { Pin::new_unchecked(self) };
+        while this.as_mut().pop().is_some() {}
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct QueueEntry {
     prev: *mut QueueEntry,
