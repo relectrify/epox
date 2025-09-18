@@ -181,10 +181,15 @@ impl Executor {
             let ew = Pin::new(unsafe { &*(e.data() as *mut RefCell<EpollWaker>) });
             let mut waker = ew.borrow_mut();
             waker.events |= e.events();
-            /* don't call waker.wake as the executor is already borrowed! */
-            let task =
-                unsafe { &Pin::new_unchecked(Rc::from_raw(waker.waker.data().cast::<TaskBox>())) };
-            self.as_mut().enqueue(task.clone());
+            /* waker.waker may be a noop waker - in that case, waker.waker.data() will
+             * not be a valid pointer */
+            if !waker.waker.data().is_null() {
+                /* don't call waker.wake as the executor is already borrowed! */
+                let task = unsafe {
+                    &Pin::new_unchecked(Rc::from_raw(waker.waker.data().cast::<TaskBox>()))
+                };
+                self.as_mut().enqueue(task.clone());
+            }
         }
         Ok(())
     }
