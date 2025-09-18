@@ -353,7 +353,7 @@ pub fn spawn_with_priority<T: 'static, F: Future<Output = T> + 'static>(
  * Run the thread local executor until no futures are pending.
  */
 pub fn run() -> Result<(), std::io::Error> {
-    loop {
+    'outer: loop {
         while let Some(t) = exec(|mut e| {
             *e.as_mut().project().task_control_flow = TaskControlFlow::Normal;
             e.highest_priority_runnable_task()
@@ -385,14 +385,7 @@ pub fn run() -> Result<(), std::io::Error> {
                     })?;
                 }
                 TaskControlFlow::Shutdown => {
-                    exec(|mut e| {
-                        /* clear all state */
-                        while e.as_mut().highest_priority_runnable_task().is_some() {}
-                        while e.as_mut().project().sleepq.pop().is_some() {}
-                        e.as_mut().project().events.clear();
-                        *e.as_mut().project().epoll = create_epoll()?;
-                        Ok::<(), std::io::Error>(())
-                    })?;
+                    break 'outer;
                 }
             }
         }
@@ -404,6 +397,11 @@ pub fn run() -> Result<(), std::io::Error> {
         /* wait for events */
         exec(|e| e.epoll_wait(EpollTimeout::NONE))?;
     }
+
+    // drop the executor, releasing all resources it has used
+    // replaces it with a new one so you can call run() again
+    let _ = EXECUTOR.replace(Executor::new()?);
+
     Ok(())
 }
 
