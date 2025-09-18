@@ -25,7 +25,8 @@ pub struct Task<T, F: Future<Output = T>> {
     #[pin]
     queue_entry: QueueEntry,
     priority: Priority,
-    waker: Cell<Waker>,
+    /* waker for Handle which may be waiting on this task */
+    handle_waker: Cell<Waker>,
     #[pin]
     future: F,
     result: Cell<Option<T>>,
@@ -37,7 +38,7 @@ impl<T, F: Future<Output = T>> Task<T, F> {
         Self {
             queue_entry: QueueEntry::new(),
             priority,
-            waker: Cell::new(Waker::noop().clone()),
+            handle_waker: Cell::new(Waker::noop().clone()),
             future,
             result: Cell::new(None),
             _not_send_not_sync: PhantomData,
@@ -50,15 +51,17 @@ impl<T, F: Future<Output = T>> Task<T, F> {
 
     fn ready(self: Pin<&mut Self>, result: T) {
         self.result.set(Some(result));
-        self.waker.replace(Waker::noop().clone()).wake_by_ref();
+        self.handle_waker
+            .replace(Waker::noop().clone())
+            .wake_by_ref();
     }
 
     fn result(&self) -> Option<T> {
         self.result.take()
     }
 
-    fn set_waker(&self, waker: Waker) {
-        self.waker.set(waker);
+    fn set_handle_waker(&self, waker: Waker) {
+        self.handle_waker.set(waker);
     }
 }
 
@@ -126,7 +129,7 @@ impl<T: 'static, F: Future<Output = T> + 'static> Future for Handle<T, F> {
         if let Some(result) = task.result() {
             Poll::Ready(result)
         } else {
-            task.set_waker(cx.waker().clone());
+            task.set_handle_waker(cx.waker().clone());
             Poll::Pending
         }
     }
