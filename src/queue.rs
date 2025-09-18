@@ -14,7 +14,7 @@ pub(crate) struct Queue<T: Queueable> {
 
 impl<T: Queueable> Queue<T> {
     /* safety: caller must init() queue after it is pinned */
-    pub(crate) unsafe fn new() -> Self {
+    pub(crate) const unsafe fn new() -> Self {
         Self {
             head: QueueEntry::new(),
             _phantom: PhantomData,
@@ -74,11 +74,11 @@ pub(crate) struct QueueEntry {
 }
 
 impl QueueEntry {
-    pub(crate) fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
-            prev: Default::default(),
-            next: Default::default(),
-            outer: Default::default(),
+            prev: std::ptr::null_mut(),
+            next: std::ptr::null_mut(),
+            outer: std::ptr::null_mut(),
             _pinned: PhantomPinned,
         }
     }
@@ -91,12 +91,12 @@ impl QueueEntry {
             let s = self.get_unchecked_mut();
             (*s.prev).next = s.next;
             (*s.next).prev = s.prev;
-            s.prev = Default::default();
+            s.prev = std::ptr::null_mut();
         }
     }
 
-    pub(crate) fn is_queued(&self) -> bool {
-        self.prev != Default::default()
+    pub(crate) const fn is_queued(&self) -> bool {
+        !self.prev.is_null()
     }
 }
 
