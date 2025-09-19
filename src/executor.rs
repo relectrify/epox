@@ -12,7 +12,7 @@ use std::{
     marker::PhantomData,
     os::fd::AsFd,
     pin::Pin,
-    rc::Rc,
+    sync::{Arc, Weak},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
@@ -41,19 +41,28 @@ pub(crate) fn exec<R, F: FnOnce(Pin<&mut Executor>) -> R>(f: F) -> R {
 }
 
 /*
- * The thing we use to hold on to a task.
+ * The thing the executor uses to hold on to a task.
  *
- * TODO: should be Pin<ThinRc<RefCell<dyn AnyTask>>>, then remove this type.
+ * Unfortunately we currently need two heap allocations to store a task as
+ * the waker can only store a thin pointer. One of these features needs to
+ * stabilise for us to do any better here:
+ *  https://doc.rust-lang.org/nightly/unstable-book/library-features/context-ext.html
+ *  https://doc.rust-lang.org/beta/unstable-book/library-features/thin-box.html
+ *  https://doc.rust-lang.org/beta/unstable-book/library-features/ptr-metadata.html
+ * TODO: use one allocation for tasks
  */
-type TaskBox = Box<RefCell<dyn AnyTask>>;
-pub(crate) type TaskRef = Pin<Rc<TaskBox>>;
+pub(crate) struct ExecutorTask {
+    waker: Waker,
+    pub(crate) task: Pin<Box<RefCell<dyn AnyTask>>>,
+}
+pub(crate) type TaskRef = Pin<Arc<ExecutorTask>>;
 
-impl Queueable for TaskBox {
-    fn with_entry<F: FnMut(Pin<&mut QueueEntry>)>(self: Pin<&Self>, mut f: F) {
-        let mut s = self.borrow_mut();
+impl Queueable for ExecutorTask {
+    fn with_entry<R, F: FnMut(Pin<&mut QueueEntry>) -> R>(self: Pin<&Self>, mut f: F) -> R {
+        let mut s = self.task.borrow_mut();
         /* safety: self is pinned therefore borrowed self is also pinned */
         let s = unsafe { Pin::new_unchecked(&mut *s) };
-        f(s.queue_entry());
+        f(s.queue_entry())
     }
 }
 
@@ -83,14 +92,14 @@ pub(crate) struct Executor {
     /* All tasks in the run queues have either been newly spawned or have have
      * been woken. Either way, they need to be polled. */
     #[pin]
-    runq_high: Queue<TaskBox>,
+    runq_high: Queue<ExecutorTask>,
     #[pin]
-    runq_normal: Queue<TaskBox>,
+    runq_normal: Queue<ExecutorTask>,
     #[pin]
-    runq_low: Queue<TaskBox>,
+    runq_low: Queue<ExecutorTask>,
     /* Tasks in the sleep queue are pending. */
     #[pin]
-    sleepq: Queue<TaskBox>,
+    sleepq: Queue<ExecutorTask>,
     events: Vec<EpollEvent>,
     task_control_flow: TaskControlFlow,
     _not_send_not_sync: PhantomData<*mut ()>,
@@ -123,9 +132,10 @@ impl Executor {
         future: F,
         priority: Priority,
     ) -> crate::task::Handle<T, F> {
-        let task = Rc::pin(TaskBox::from(Box::new(RefCell::new(Task::new(
-            future, priority,
-        )))));
+        let task = Pin::new(Arc::new_cyclic(|me| ExecutorTask {
+            waker: build_task_waker(me),
+            task: Box::pin(RefCell::new(Task::new(future, priority))),
+        }));
         self.enqueue(task.clone());
         crate::task::Handle::new(task)
     }
@@ -157,7 +167,7 @@ impl Executor {
         Ok(())
     }
 
-    fn runq(self: Pin<&mut Self>, priority: Priority) -> Pin<&mut Queue<TaskBox>> {
+    fn runq(self: Pin<&mut Self>, priority: Priority) -> Pin<&mut Queue<ExecutorTask>> {
         let this = self.project();
         match priority {
             Priority::High => this.runq_high,
@@ -184,18 +194,17 @@ impl Executor {
             /* waker.waker may be a noop waker - in that case, waker.waker.data() will
              * not be a valid pointer */
             if !waker.waker.data().is_null() {
-                /* don't call waker.wake as the executor is already borrowed! */
-                let task = unsafe {
-                    &Pin::new_unchecked(Rc::from_raw(waker.waker.data().cast::<TaskBox>()))
-                };
-                self.as_mut().enqueue(task.clone());
+                /* don't call waker.waker.wake_by_ref() as the executor is already borrowed! */
+                let weak = weak_from_raw(waker.waker.data());
+                self.as_mut().enqueue(Pin::new(weak.upgrade().unwrap()));
+                let _ = Weak::into_raw(weak);
             }
         }
         Ok(())
     }
 
     fn enqueue(self: Pin<&mut Self>, task: TaskRef) {
-        let priority = task.borrow().priority();
+        let priority = task.task.borrow().priority();
         self.runq(priority).push(task);
     }
 
@@ -217,35 +226,51 @@ impl Executor {
     }
 }
 
+fn weak_from_raw(p: *const ()) -> Weak<ExecutorTask> {
+    /* safety: p is the result of Weak::into_raw */
+    unsafe { Weak::from_raw(p.cast::<ExecutorTask>()) }
+}
+
 /*
  * Build a waker for a task.
  */
-fn build_task_waker(task: &TaskRef) -> Waker {
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
+fn build_task_waker(task: &Weak<ExecutorTask>) -> Waker {
+    const VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake_by_val, wake_by_ref, drop);
 
-    const unsafe fn clone(p: *const ()) -> RawWaker {
-        RawWaker::new(p, &VTABLE)
-    }
-
-    unsafe fn wake(p: *const ()) {
-        let task = unsafe { &Pin::new_unchecked(Rc::from_raw(p.cast::<TaskBox>())) };
-        exec(|e| e.enqueue(task.clone()));
-    }
-
-    unsafe fn wake_by_ref(p: *const ()) {
-        unsafe {
-            wake(p);
+    fn wake(weak: &Weak<ExecutorTask>) {
+        if let Some(task) = weak.upgrade() {
+            exec(|e| e.enqueue(Pin::new(task)));
         }
     }
 
-    const unsafe fn drop(_p: *const ()) {}
-
-    unsafe {
-        Waker::from_raw(RawWaker::new(
-            std::ptr::from_ref(task.as_ref().get_ref()).cast(),
-            &VTABLE,
-        ))
+    unsafe fn clone(p: *const ()) -> RawWaker {
+        let weak = weak_from_raw(p);
+        let clone = if let Some(task) = weak.upgrade() {
+            /* task still running */
+            RawWaker::new(Weak::into_raw(Arc::downgrade(&task)).cast(), &VTABLE)
+        } else {
+            /* task has completed */
+            RawWaker::new(Waker::noop().data(), Waker::noop().vtable())
+        };
+        let _ = Weak::into_raw(weak);
+        clone
     }
+
+    unsafe fn wake_by_val(p: *const ()) {
+        wake(&weak_from_raw(p));
+    }
+
+    unsafe fn wake_by_ref(p: *const ()) {
+        let weak = weak_from_raw(p);
+        wake(&weak);
+        let _ = Weak::into_raw(weak);
+    }
+
+    unsafe fn drop(p: *const ()) {
+        weak_from_raw(p);
+    }
+
+    unsafe { Waker::from_raw(RawWaker::new(Weak::into_raw(task.clone()).cast(), &VTABLE)) }
 }
 
 /**
@@ -360,11 +385,10 @@ pub fn run() -> Result<(), std::io::Error> {
         }) {
             let pending = {
                 /* poll the task */
-                let waker = build_task_waker(&t);
-                let mut t = t.borrow_mut();
+                let mut cx = Context::from_waker(&t.waker);
+                let mut t = t.task.borrow_mut();
                 /* safety: t is pinned therefore its deref is also pinned */
                 let t = unsafe { Pin::new_unchecked(&mut *t) };
-                let mut cx = Context::from_waker(&waker);
                 t.poll(&mut cx) == Poll::Pending
             };
 
