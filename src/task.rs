@@ -95,15 +95,15 @@ impl<T: 'static, F: Future<Output = T> + 'static> AnyTask for Task<T, F> {
  * Used to get the result (return value) of a task.
  */
 pub struct Handle<T, F> {
-    task: TaskRef,
+    taskref: TaskRef,
     _phantom_t: PhantomData<T>,
     _phantom_f: PhantomData<F>,
 }
 
 impl<T: 'static, F: Future<Output = T> + 'static> Handle<T, F> {
-    pub(crate) fn new(task: TaskRef) -> Self {
+    pub(crate) const fn new(taskref: TaskRef) -> Self {
         Self {
-            task,
+            taskref,
             _phantom_t: PhantomData,
             _phantom_f: PhantomData,
         }
@@ -111,7 +111,7 @@ impl<T: 'static, F: Future<Output = T> + 'static> Handle<T, F> {
 
     #[must_use]
     pub fn result(&self) -> Option<T> {
-        let r = self.task.borrow();
+        let r = self.taskref.task.borrow();
         let task: std::cell::Ref<'_, Task<T, F>> =
             std::cell::Ref::map(r, |t| t.as_any().downcast_ref::<Task<T, F>>().unwrap());
         task.result()
@@ -122,7 +122,7 @@ impl<T: 'static, F: Future<Output = T> + 'static> Future for Handle<T, F> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let r = self.task.borrow();
+        let r = self.taskref.task.borrow();
         let task: std::cell::Ref<'_, Task<T, F>> =
             std::cell::Ref::map(r, |t| t.as_any().downcast_ref::<Task<T, F>>().unwrap());
 
