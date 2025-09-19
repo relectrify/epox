@@ -26,20 +26,18 @@ impl Timer {
         Ok(())
     }
 
-    pub async fn tick(&mut self) -> Result<u64, Error> {
-        self.fd
-            .with(|fd, _events| {
-                let mut buf = std::mem::MaybeUninit::<u64>::uninit();
-                /* safety: read does not require an initialised buffer */
-                nix::unistd::read(fd.as_fd(), unsafe {
-                    std::slice::from_raw_parts_mut(
-                        buf.as_mut_ptr().cast::<u8>(),
-                        std::mem::size_of_val(&buf),
-                    )
-                })?;
-                /* safety: if read() does not return an error, buf is initialised */
-                Ok(unsafe { buf.assume_init() })
-            })
-            .await
+    pub fn tick(&mut self) -> impl Future<Output = Result<u64, Error>> + Unpin {
+        self.fd.with(|fd, _events| {
+            let mut buf = std::mem::MaybeUninit::<u64>::uninit();
+            /* safety: read does not require an initialised buffer */
+            nix::unistd::read(fd.as_fd(), unsafe {
+                std::slice::from_raw_parts_mut(
+                    buf.as_mut_ptr().cast::<u8>(),
+                    std::mem::size_of_val(&buf),
+                )
+            })?;
+            /* safety: if read() does not return an error, buf is initialised */
+            Ok(unsafe { buf.assume_init() })
+        })
     }
 }
