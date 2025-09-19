@@ -1,7 +1,7 @@
 use std::{
     marker::{PhantomData, PhantomPinned},
     pin::Pin,
-    rc::Rc,
+    sync::Arc,
 };
 
 /**
@@ -28,9 +28,10 @@ impl<T: Queueable> Queue<T> {
         s.next = std::ptr::from_mut(s);
     }
 
-    pub(crate) fn push(mut self: Pin<&mut Self>, entry: Pin<Rc<T>>) {
+    pub(crate) fn push(mut self: Pin<&mut Self>, entry: Pin<Arc<T>>) {
         let outer = std::ptr::from_ref(entry.as_ref().get_ref());
-        entry.as_ref().with_entry(|mut e| {
+        let was_queued = entry.as_ref().with_entry(|mut e| {
+            let was_queued = e.is_queued();
             e.as_mut().unqueue();
             unsafe {
                 let s = self.as_mut().get_unchecked_mut();
@@ -41,20 +42,23 @@ impl<T: Queueable> Queue<T> {
                 s.head.next = e;
                 e.outer = outer.cast::<()>();
             }
+            was_queued
         });
 
-        /* reference now belongs to the list */
-        let _ = Rc::into_raw(unsafe { Pin::into_inner_unchecked(entry) });
+        if !was_queued {
+            /* reference now belongs to the list */
+            let _ = Arc::into_raw(unsafe { Pin::into_inner_unchecked(entry) });
+        }
     }
 
-    pub(crate) fn pop(self: Pin<&mut Self>) -> Option<Pin<Rc<T>>> {
+    pub(crate) fn pop(self: Pin<&mut Self>) -> Option<Pin<Arc<T>>> {
         (!self.is_empty()).then(|| {
             /* get last entry */
             let mut entry = unsafe { Pin::new_unchecked(&mut *self.head.prev) };
             /* remove it from the list */
             entry.as_mut().unqueue();
             /* reconstruct reference */
-            unsafe { Pin::new_unchecked(Rc::from_raw(entry.outer.cast::<T>())) }
+            unsafe { Pin::new_unchecked(Arc::from_raw(entry.outer.cast::<T>())) }
         })
     }
 
@@ -75,7 +79,7 @@ pub(crate) struct QueueEntry {
     prev: *mut QueueEntry,
     next: *mut QueueEntry,
     /* TODO: we only need to store an outer pointer because we have a boxed
-     * value inside the Rc. When we ThinRc we can remove this. */
+     * value inside the Arc. When we ThinArc we can remove this. */
     outer: *const (),
     _pinned: PhantomPinned,
 }
@@ -90,7 +94,7 @@ impl QueueEntry {
         }
     }
 
-    pub(crate) fn unqueue(self: Pin<&mut Self>) {
+    fn unqueue(self: Pin<&mut Self>) {
         if !self.is_queued() {
             return;
         }
@@ -102,11 +106,11 @@ impl QueueEntry {
         }
     }
 
-    pub(crate) const fn is_queued(&self) -> bool {
+    const fn is_queued(&self) -> bool {
         !self.prev.is_null()
     }
 }
 
 pub(crate) trait Queueable {
-    fn with_entry<F: FnMut(Pin<&mut QueueEntry>)>(self: Pin<&Self>, f: F);
+    fn with_entry<R, F: FnMut(Pin<&mut QueueEntry>) -> R>(self: Pin<&Self>, f: F) -> R;
 }
