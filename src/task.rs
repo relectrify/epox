@@ -21,7 +21,7 @@ use std::{
  */
 #[pin_project]
 #[repr(C)]
-pub struct Task<T, F: Future<Output = T>> {
+pub struct Task<F: Future> {
     #[pin]
     queue_entry: QueueEntry,
     priority: Priority,
@@ -29,11 +29,11 @@ pub struct Task<T, F: Future<Output = T>> {
     handle_waker: Cell<Waker>,
     #[pin]
     future: F,
-    result: Cell<Option<T>>,
+    result: Cell<Option<F::Output>>,
     _not_send_not_sync: PhantomData<*mut ()>,
 }
 
-impl<T, F: Future<Output = T>> Task<T, F> {
+impl<F: Future> Task<F> {
     pub fn new(future: F, priority: Priority) -> Self {
         Self {
             queue_entry: QueueEntry::new(),
@@ -49,14 +49,14 @@ impl<T, F: Future<Output = T>> Task<T, F> {
         self.project().future
     }
 
-    fn ready(self: Pin<&mut Self>, result: T) {
+    fn ready(self: Pin<&mut Self>, result: F::Output) {
         self.result.set(Some(result));
         self.handle_waker
             .replace(Waker::noop().clone())
             .wake_by_ref();
     }
 
-    fn result(&self) -> Option<T> {
+    fn result(&self) -> Option<F::Output> {
         self.result.take()
     }
 
@@ -65,7 +65,7 @@ impl<T, F: Future<Output = T>> Task<T, F> {
     }
 }
 
-impl<T: 'static, F: Future<Output = T> + 'static> AnyTask for Task<T, F> {
+impl<F: Future + 'static> AnyTask for Task<F> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         match self.as_mut().future().poll(cx) {
             Poll::Pending => Poll::Pending,
@@ -94,26 +94,24 @@ impl<T: 'static, F: Future<Output = T> + 'static> AnyTask for Task<T, F> {
  *
  * Used to get the result (return value) of a task.
  */
-pub struct Handle<T, F> {
+pub struct Handle<F> {
     taskref: TaskRef,
-    _phantom_t: PhantomData<T>,
     _phantom_f: PhantomData<F>,
 }
 
-impl<T: 'static, F: Future<Output = T> + 'static> Handle<T, F> {
+impl<F: Future + 'static> Handle<F> {
     pub(crate) const fn new(taskref: TaskRef) -> Self {
         Self {
             taskref,
-            _phantom_t: PhantomData,
             _phantom_f: PhantomData,
         }
     }
 
     #[must_use]
-    pub fn result(&self) -> Option<T> {
+    pub fn result(&self) -> Option<F::Output> {
         let r = self.taskref.task.borrow();
-        let task: std::cell::Ref<'_, Task<T, F>> =
-            std::cell::Ref::map(r, |t| t.as_any().downcast_ref::<Task<T, F>>().unwrap());
+        let task: std::cell::Ref<'_, Task<F>> =
+            std::cell::Ref::map(r, |t| t.as_any().downcast_ref::<Task<F>>().unwrap());
         task.result()
     }
 
@@ -122,13 +120,13 @@ impl<T: 'static, F: Future<Output = T> + 'static> Handle<T, F> {
     }
 }
 
-impl<T: 'static, F: Future<Output = T> + 'static> Future for Handle<T, F> {
-    type Output = T;
+impl<F: Future + 'static> Future for Handle<F> {
+    type Output = F::Output;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let r = self.taskref.task.borrow();
-        let task: std::cell::Ref<'_, Task<T, F>> =
-            std::cell::Ref::map(r, |t| t.as_any().downcast_ref::<Task<T, F>>().unwrap());
+        let task: std::cell::Ref<'_, Task<F>> =
+            std::cell::Ref::map(r, |t| t.as_any().downcast_ref::<Task<F>>().unwrap());
 
         if let Some(result) = task.result() {
             Poll::Ready(result)

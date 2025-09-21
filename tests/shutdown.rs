@@ -101,23 +101,22 @@ fn spawn_checked() {
         "return value"
     });
     // will loop 3x before returning an error, and should never return Ok
-    let will_error: epox::task::Handle<Result<(), Box<dyn std::error::Error>>, _> =
-        epox::spawn_checked(async move {
-            let mut num = 0;
-            loop {
-                let mut timer = epox::Timer::new().unwrap();
-                timer
-                    .set(epox::timer::Expiration::OneShot(
-                        (SHUTDOWN_AFTER / 3).into(),
-                    ))
-                    .unwrap();
-                timer.tick().await.unwrap();
+    let will_error = epox::spawn_checked::<(), Box<dyn std::error::Error>, _>(async move {
+        let mut num = 0;
+        loop {
+            let mut timer = epox::Timer::new().unwrap();
+            timer
+                .set(epox::timer::Expiration::OneShot(
+                    (SHUTDOWN_AFTER / 3).into(),
+                ))
+                .unwrap();
+            timer.tick().await.unwrap();
 
-                (num < 3).then_some(()).ok_or("error")?;
+            (num < 3).then_some(()).ok_or("error")?;
 
-                num += 1;
-            }
-        });
+            num += 1;
+        }
+    });
 
     let will_not_complete = epox::spawn(async move {
         let mut timer = epox::Timer::new().unwrap();
