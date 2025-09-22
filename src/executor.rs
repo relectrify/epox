@@ -3,14 +3,18 @@ use crate::{
     task,
     task::Task,
 };
-use nix::sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout};
+use nix::{
+    fcntl::OFlag,
+    sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout},
+    unistd::{pipe2, read, write},
+};
 use pin_project::pin_project;
 use std::{
     any::Any,
     cell::RefCell,
     io::Error,
     marker::PhantomData,
-    os::fd::AsFd,
+    os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd},
     pin::Pin,
     sync::{Arc, Weak},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
@@ -52,6 +56,9 @@ pub(crate) fn exec<R, F: FnOnce(Pin<&mut Executor>) -> R>(f: F) -> R {
  * TODO: use one allocation for tasks
  */
 pub(crate) struct ExecutorTask {
+    /* write the task's address to this pipe to wake the task */
+    pipe_wr: RawFd,
+    /* use this waker to wake the task */
     waker: Waker,
     pub(crate) task: Pin<Box<RefCell<dyn AnyTask>>>,
 }
@@ -75,7 +82,7 @@ enum TaskControlFlow {
     Normal,
     /* task has yielded */
     Yield,
-    /* task has asked to  shutdown the executor */
+    /* task has asked to shutdown the executor */
     Shutdown,
 }
 
@@ -100,6 +107,10 @@ pub(crate) struct Executor {
     /* Tasks in the sleep queue are pending. */
     #[pin]
     sleepq: Queue<ExecutorTask>,
+    /* If a task needs to be woken from another thread it's address is
+     * written to this task to be handled by the local executor. */
+    pipe_rd: OwnedFd,
+    pipe_wr: OwnedFd,
     events: Vec<EpollEvent>,
     task_control_flow: TaskControlFlow,
     _not_send_not_sync: PhantomData<*mut ()>,
@@ -107,12 +118,15 @@ pub(crate) struct Executor {
 
 impl Executor {
     fn new() -> Result<Pin<Box<Self>>, Error> {
+        let (pipe_rd, pipe_wr) = pipe2(OFlag::O_CLOEXEC | OFlag::O_NONBLOCK)?;
         let mut s = Box::pin(Self {
             epoll: create_epoll()?,
             runq_high: unsafe { Queue::new() },
             runq_normal: unsafe { Queue::new() },
             runq_low: unsafe { Queue::new() },
             sleepq: unsafe { Queue::new() },
+            pipe_rd,
+            pipe_wr,
             events: Vec::new(),
             task_control_flow: TaskControlFlow::Normal,
             _not_send_not_sync: PhantomData,
@@ -124,6 +138,11 @@ impl Executor {
             this.runq_low.init();
             this.sleepq.init();
         }
+        /* task wakeup pipe */
+        this.events.push(EpollEvent::empty());
+        this.epoll
+            .add(this.pipe_rd, EpollEvent::new(EpollFlags::EPOLLIN, 0))
+            .unwrap();
         Ok(s)
     }
 
@@ -133,6 +152,7 @@ impl Executor {
         priority: Priority,
     ) -> crate::task::Handle<T, F> {
         let task = Pin::new(Arc::new_cyclic(|me| ExecutorTask {
+            pipe_wr: self.pipe_wr.as_raw_fd(),
             waker: build_task_waker(me),
             task: Box::pin(RefCell::new(Task::new(future, priority))),
         }));
@@ -187,6 +207,10 @@ impl Executor {
         /* wakeup futures which have an event, adding them to runq */
         for ei in 0..n_events {
             let e = self.events[ei];
+            if e.data() == 0 {
+                self.as_mut().wake_from_pipe()?;
+                continue;
+            }
             /* safety: e.data() is the result of std::ptr::from_ref(Pin::into_inner) */
             let ew = Pin::new(unsafe { &*(e.data() as *mut RefCell<EpollWaker>) });
             let mut waker = ew.borrow_mut();
@@ -224,6 +248,24 @@ impl Executor {
     fn shutdown(self: Pin<&mut Self>) {
         *self.project().task_control_flow = TaskControlFlow::Shutdown;
     }
+
+    fn wake_from_pipe(mut self: Pin<&mut Self>) -> Result<(), Error> {
+        let mut buf = std::mem::MaybeUninit::<*const ()>::uninit();
+        /* safety: read does not require an initialised buffer */
+        read(&self.pipe_rd, unsafe {
+            std::slice::from_raw_parts_mut(
+                buf.as_mut_ptr().cast::<u8>(),
+                std::mem::size_of_val(&buf),
+            )
+        })?;
+        /* safety: if read() does not return an error, buf is initialised */
+        let weak = weak_from_raw(unsafe { buf.assume_init() });
+        /* wake up task */
+        if let Some(task) = weak.upgrade() {
+            self.as_mut().enqueue(Pin::new(task));
+        }
+        Ok(())
+    }
 }
 
 fn weak_from_raw(p: *const ()) -> Weak<ExecutorTask> {
@@ -239,7 +281,23 @@ fn build_task_waker(task: &Weak<ExecutorTask>) -> Waker {
 
     fn wake(weak: &Weak<ExecutorTask>) {
         if let Some(task) = weak.upgrade() {
-            exec(|e| e.enqueue(Pin::new(task)));
+            exec(|e| {
+                if task.pipe_wr == e.pipe_wr.as_raw_fd() {
+                    /* same thread, enqueue directly */
+                    e.enqueue(Pin::new(task));
+                } else {
+                    /* different thread, wake via pipe */
+                    let p = Weak::into_raw(weak.clone());
+                    let bytes = unsafe {
+                        std::slice::from_raw_parts(
+                            std::ptr::from_ref(&(p as usize)).cast::<u8>(),
+                            std::mem::size_of_val(&p),
+                        )
+                    };
+                    /* safety: fd stays valid for duration of call */
+                    write(unsafe { BorrowedFd::borrow_raw(task.pipe_wr) }, bytes).unwrap();
+                }
+            });
         }
     }
 
