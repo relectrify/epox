@@ -28,6 +28,17 @@ impl<T: Queueable> Queue<T> {
         s.next = std::ptr::from_mut(s);
     }
 
+    /**
+     * Push an entry onto the queue.
+     *
+     * If the entry is already queued it will be unqueued and added to this
+     * queue.
+     * - If the entry is not queued: Add to this queue and hold reference.
+     * - If the entry is queued on another queue: Remove from other queue
+     *   and add to this queue, without changing reference count.
+     * - If the entry is queued on this queue: remove from queue and add to
+     *   end of queue, without changing reference count.
+     */
     pub(crate) fn push(mut self: Pin<&mut Self>, entry: Pin<Arc<T>>) {
         let outer = std::ptr::from_ref(entry.as_ref().get_ref());
         let was_queued = entry.as_ref().with_entry(|mut e| {
@@ -51,6 +62,13 @@ impl<T: Queueable> Queue<T> {
         }
     }
 
+    /**
+     * Pop an entry from the queue.
+     *
+     * Returns None if the queue is empty.
+     *
+     * Returns ownership of the entry to the caller.
+     */
     pub(crate) fn pop(self: Pin<&mut Self>) -> Option<Pin<Arc<T>>> {
         (!self.is_empty()).then(|| {
             /* get last entry */
@@ -62,6 +80,12 @@ impl<T: Queueable> Queue<T> {
         })
     }
 
+    /**
+     * Release a queued entry.
+     *
+     * If the entry was queued on any queue, unqueue and release ownership
+     * from the queue.
+     */
     pub(crate) fn release(self: Pin<&mut Self>, entry: Pin<Arc<T>>) {
         entry.as_ref().with_entry(|mut e| {
             if e.is_queued() {
@@ -72,6 +96,9 @@ impl<T: Queueable> Queue<T> {
         });
     }
 
+    /**
+     * Test if queue is empty.
+     */
     pub(crate) fn is_empty(&self) -> bool {
         std::ptr::eq(self.head.prev, &raw const self.head)
     }
@@ -116,6 +143,9 @@ impl QueueEntry {
         }
     }
 
+    /**
+     * Test if entry is queued.
+     */
     const fn is_queued(&self) -> bool {
         !self.prev.is_null()
     }
