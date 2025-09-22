@@ -160,6 +160,11 @@ impl Executor {
         crate::task::Handle::new(task)
     }
 
+    pub(crate) fn abort(self: Pin<&mut Self>, task: TaskRef) {
+        let this = self.project();
+        this.sleepq.release(task);
+    }
+
     pub(crate) fn yield_now(self: Pin<&mut Self>) {
         let this = self.project();
         *this.task_control_flow = TaskControlFlow::Yield;
