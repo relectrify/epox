@@ -63,3 +63,31 @@ fn unrelated_tasks() {
     assert_eq!(t1.result().unwrap(), 20);
     assert_eq!(t2.result().unwrap(), "value");
 }
+
+#[test]
+fn abort_task() {
+    let t1 = epox::spawn(async {
+        let mut timer = epox::Timer::new().unwrap();
+        timer
+            .set(epox::timer::Expiration::OneShot(
+                core::time::Duration::from_millis(1000).into(),
+            ))
+            .unwrap();
+        timer.tick().await.unwrap();
+        panic!("this task should be aborted");
+    });
+
+    epox::spawn(async move {
+        let mut timer = epox::Timer::new().unwrap();
+        timer
+            .set(epox::timer::Expiration::OneShot(
+                core::time::Duration::from_millis(100).into(),
+            ))
+            .unwrap();
+        timer.tick().await.unwrap();
+        t1.abort();
+        22
+    });
+
+    epox::run().unwrap();
+}
