@@ -116,6 +116,10 @@ impl<T: 'static, F: Future<Output = T> + 'static> Handle<T, F> {
             std::cell::Ref::map(r, |t| t.as_any().downcast_ref::<Task<T, F>>().unwrap());
         task.result()
     }
+
+    pub fn abort(&self) {
+        exec(|e| e.abort(self.taskref.clone()));
+    }
 }
 
 impl<T: 'static, F: Future<Output = T> + 'static> Future for Handle<T, F> {

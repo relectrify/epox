@@ -62,6 +62,16 @@ impl<T: Queueable> Queue<T> {
         })
     }
 
+    pub(crate) fn release(self: Pin<&mut Self>, entry: Pin<Arc<T>>) {
+        entry.as_ref().with_entry(|mut e| {
+            if e.is_queued() {
+                /* reconstruct then drop reference */
+                let _ = unsafe { Pin::new_unchecked(Arc::from_raw(e.outer.cast::<T>())) };
+            }
+            e.as_mut().unqueue();
+        });
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         std::ptr::eq(self.head.prev, &raw const self.head)
     }
