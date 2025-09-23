@@ -28,3 +28,15 @@ async fn takes_one_minute() -> std::io::Result<()> {
     timer.tick().await?;
     Ok(())
 }
+
+#[test]
+fn sleep() {
+    epox::spawn(async {
+        epox::time::sleep(TIMEOUT_DURATION).await.unwrap();
+    });
+
+    let begin = std::time::Instant::now();
+    epox::run().unwrap();
+    let took = std::time::Instant::now().duration_since(begin); // should be within 5% of TIMEOUT_DURATION
+    assert!(took.abs_diff(TIMEOUT_DURATION) < (TIMEOUT_DURATION / 20));
+}
