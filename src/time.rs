@@ -32,3 +32,11 @@ impl<F: Future> Future for Timeout<F> {
         }
     }
 }
+
+/// Sleeps for `duration` before returning
+pub async fn sleep(duration: Duration) -> std::io::Result<()> {
+    let mut timer = Timer::new()?;
+    timer.set(nix::sys::timer::Expiration::OneShot(duration.into()))?;
+    timer.tick().await?;
+    Ok(())
+}
