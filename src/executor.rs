@@ -139,7 +139,7 @@ impl Executor {
         self: Pin<&mut Self>,
         future: F,
         priority: Priority,
-    ) -> crate::task::Handle<F> {
+    ) -> crate::task::Handle<F::Output> {
         let task = Pin::new(Arc::new_cyclic(|me| ExecutorTask {
             pipe_wr: self.pipe_wr.as_raw_fd(),
             waker: build_task_waker(me),
@@ -380,7 +380,7 @@ pub enum Priority {
  */
 pub fn spawn_checked<T: 'static, E: 'static, F: Future<Output = Result<T, E>> + 'static>(
     future: F,
-) -> task::Handle<impl Future<Output = Result<T, E>>> {
+) -> task::Handle<Result<T, E>> {
     spawn_checked_with_priority(future, Priority::Normal)
 }
 
@@ -398,7 +398,7 @@ pub fn spawn_checked_with_priority<
 >(
     future: F,
     priority: Priority,
-) -> task::Handle<impl Future<Output = Result<T, E>>> {
+) -> task::Handle<Result<T, E>> {
     spawn_with_priority(
         async move {
             future
@@ -412,14 +412,17 @@ pub fn spawn_checked_with_priority<
 /**
  * Spawn a task on the thread local executor with normal priority.
  */
-pub fn spawn<F: Future + 'static>(future: F) -> task::Handle<F> {
+pub fn spawn<F: Future + 'static>(future: F) -> task::Handle<F::Output> {
     exec(|e| e.spawn(future, Priority::Normal))
 }
 
 /**
  * Spawn a task on the thread local executor with [`Priority`] priority.
  */
-pub fn spawn_with_priority<F: Future + 'static>(future: F, priority: Priority) -> task::Handle<F> {
+pub fn spawn_with_priority<F: Future + 'static>(
+    future: F,
+    priority: Priority,
+) -> task::Handle<F::Output> {
     exec(|e| e.spawn(future, priority))
 }
 
