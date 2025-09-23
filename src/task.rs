@@ -121,21 +121,21 @@ impl Task<dyn AnyFuture> {
  *
  * Used to get the result (return value) of a task.
  */
-pub struct Handle<F> {
+pub struct Handle<T> {
     taskref: TaskRef,
-    _phantom_f: PhantomData<F>,
+    _phantom_t: PhantomData<T>,
 }
 
-impl<F: Future + 'static> Handle<F> {
+impl<T: 'static> Handle<T> {
     pub(crate) const fn new(taskref: TaskRef) -> Self {
         Self {
             taskref,
-            _phantom_f: PhantomData,
+            _phantom_t: PhantomData,
         }
     }
 
     #[must_use]
-    pub fn result(&self) -> Option<F::Output> {
+    pub fn result(&self) -> Option<T> {
         let mut ret = None;
         self.taskref.task.borrow().result(&mut ret);
         ret
@@ -146,8 +146,8 @@ impl<F: Future + 'static> Handle<F> {
     }
 }
 
-impl<F: Future + 'static> Future for Handle<F> {
-    type Output = F::Output;
+impl<T: 'static> Future for Handle<T> {
+    type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         if let Some(result) = self.result() {
