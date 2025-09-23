@@ -1,6 +1,6 @@
 use crate::{
     Priority,
-    executor::{AnyTask, TaskRef, exec},
+    executor::{TaskRef, exec},
     queue::QueueEntry,
 };
 use pin_project::pin_project;
@@ -12,80 +12,107 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
+pub trait AnyFuture {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()>;
+    fn take_output(&self, any: &mut dyn Any);
+}
+
+#[pin_project]
+pub(crate) struct OutputFuture<F: Future> {
+    output: Cell<Option<F::Output>>,
+    #[pin]
+    future: F,
+}
+
+impl<F: Future> AnyFuture for OutputFuture<F>
+where
+    F::Output: 'static,
+{
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this = self.project();
+        match this.future.poll(cx) {
+            Poll::Ready(ret) => {
+                this.output.set(Some(ret));
+                Poll::Ready(())
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    /// `any` should be an [`Option<F::Output>`]
+    ///
+    /// This stops F::Output from bubbling up through the [`AnyFuture`] trait
+    fn take_output(&self, any: &mut dyn Any) {
+        let x = any.downcast_mut::<Option<F::Output>>().unwrap();
+        *x = self.output.take();
+    }
+}
+
 /**
  * A task stores a future.
- *
- * Why repr(C)? So that the queue_entry, priority and waker members are at
- * the same offset for all tasks, meaning that the generated implementations
- * of common functions can be shared between all instances of Task.
  */
 #[pin_project]
-#[repr(C)]
-pub struct Task<F: Future> {
+pub struct Task<F: AnyFuture + ?Sized> {
     #[pin]
     queue_entry: QueueEntry,
     priority: Priority,
     /* waker for Handle which may be waiting on this task */
     handle_waker: Cell<Waker>,
-    #[pin]
-    future: F,
-    result: Cell<Option<F::Output>>,
     _not_send_not_sync: PhantomData<*mut ()>,
+    #[pin]
+    // the last field of a struct can hold a dynamically sized type, so - because F: ?Sized - the
+    // executor can coerce a Task<F> into a Task<dyn AnyFuture>
+    // see https://doc.rust-lang.org/nomicon/exotic-sizes.html#dynamically-sized-types-dsts
+    future: F,
 }
 
-impl<F: Future> Task<F> {
+impl<F: Future> Task<OutputFuture<F>>
+where
+    F::Output: 'static,
+{
     pub fn new(future: F, priority: Priority) -> Self {
         Self {
             queue_entry: QueueEntry::new(),
             priority,
             handle_waker: Cell::new(Waker::noop().clone()),
-            future,
-            result: Cell::new(None),
             _not_send_not_sync: PhantomData,
+            future: OutputFuture {
+                output: Cell::new(None),
+                future,
+            },
         }
     }
+}
 
-    fn future(self: Pin<&mut Self>) -> Pin<&mut F> {
-        self.project().future
+impl Task<dyn AnyFuture> {
+    pub(crate) fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let res = self.as_mut().project().future.poll(cx);
+        if res.is_ready() {
+            self.ready();
+        }
+        res
     }
 
-    fn ready(self: Pin<&mut Self>, result: F::Output) {
-        self.result.set(Some(result));
+    pub(crate) const fn priority(&self) -> Priority {
+        self.priority
+    }
+
+    pub(crate) fn queue_entry(self: Pin<&mut Self>) -> Pin<&mut QueueEntry> {
+        self.project().queue_entry
+    }
+
+    fn ready(self: Pin<&mut Self>) {
         self.handle_waker
             .replace(Waker::noop().clone())
             .wake_by_ref();
     }
 
-    fn result(&self) -> Option<F::Output> {
-        self.result.take()
-    }
-
     fn set_handle_waker(&self, waker: Waker) {
         self.handle_waker.set(waker);
     }
-}
 
-impl<F: Future + 'static> AnyTask for Task<F> {
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        match self.as_mut().future().poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(result) => {
-                self.as_mut().ready(result);
-                Poll::Ready(())
-            }
-        }
-    }
-
-    fn priority(&self) -> Priority {
-        self.priority
-    }
-
-    fn queue_entry(self: Pin<&mut Self>) -> Pin<&mut QueueEntry> {
-        self.project().queue_entry
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn result(&self, any: &mut dyn Any) {
+        self.future.take_output(any);
     }
 }
 
@@ -109,10 +136,9 @@ impl<F: Future + 'static> Handle<F> {
 
     #[must_use]
     pub fn result(&self) -> Option<F::Output> {
-        let r = self.taskref.task.borrow();
-        let task: std::cell::Ref<'_, Task<F>> =
-            std::cell::Ref::map(r, |t| t.as_any().downcast_ref::<Task<F>>().unwrap());
-        task.result()
+        let mut ret = None;
+        self.taskref.task.borrow().result(&mut ret);
+        ret
     }
 
     pub fn abort(&self) {
@@ -124,14 +150,13 @@ impl<F: Future + 'static> Future for Handle<F> {
     type Output = F::Output;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let r = self.taskref.task.borrow();
-        let task: std::cell::Ref<'_, Task<F>> =
-            std::cell::Ref::map(r, |t| t.as_any().downcast_ref::<Task<F>>().unwrap());
-
-        if let Some(result) = task.result() {
+        if let Some(result) = self.result() {
             Poll::Ready(result)
         } else {
-            task.set_handle_waker(cx.waker().clone());
+            self.taskref
+                .task
+                .borrow()
+                .set_handle_waker(cx.waker().clone());
             Poll::Pending
         }
     }
