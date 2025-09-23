@@ -10,7 +10,6 @@ use nix::{
 };
 use pin_project::pin_project;
 use std::{
-    any::Any,
     cell::RefCell,
     io::Error,
     marker::PhantomData,
@@ -19,16 +18,6 @@ use std::{
     sync::{Arc, Weak},
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
-
-/**
- * A type erased task.
- */
-pub(crate) trait AnyTask {
-    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<()>;
-    fn priority(&self) -> Priority;
-    fn queue_entry(self: Pin<&mut Self>) -> Pin<&mut QueueEntry>;
-    fn as_any(&self) -> &dyn Any;
-}
 
 thread_local! {
     /**
@@ -60,7 +49,7 @@ pub(crate) struct ExecutorTask {
     pipe_wr: RawFd,
     /* use this waker to wake the task */
     waker: Waker,
-    pub(crate) task: Pin<Box<RefCell<dyn AnyTask>>>,
+    pub(crate) task: Pin<Box<RefCell<Task<dyn crate::task::AnyFuture>>>>,
 }
 pub(crate) type TaskRef = Pin<Arc<ExecutorTask>>;
 
