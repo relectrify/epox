@@ -49,7 +49,7 @@ pub(crate) struct ExecutorTask {
     pipe_wr: RawFd,
     /* use this waker to wake the task */
     waker: Waker,
-    pub(crate) task: Pin<Box<RefCell<Task<dyn crate::task::AnyFuture>>>>,
+    pub(crate) task: Pin<Box<RefCell<Task>>>,
 }
 pub(crate) type TaskRef = Pin<Arc<ExecutorTask>>;
 
@@ -143,7 +143,7 @@ impl Executor {
         let task = Pin::new(Arc::new_cyclic(|me| ExecutorTask {
             pipe_wr: self.pipe_wr.as_raw_fd(),
             waker: build_task_waker(me),
-            task: Box::pin(RefCell::new(Task::new(future, priority))),
+            task: Task::new_pinned_boxed_refcell(future, priority),
         }));
         self.enqueue(task.clone());
         crate::task::Handle::new(task)
