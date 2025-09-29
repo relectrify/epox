@@ -1,9 +1,9 @@
+use crate::Timer;
 use futures_util::FutureExt;
 use std::{task::Poll, time::Duration};
 
-use crate::Timer;
-
-/// Run the inner [`Future`] until it completes, or `duration` elapses - whichever comes first
+/// Run the inner [`Future`] until it completes, or `duration` elapses -
+/// whichever comes first
 pub fn timeout<F: Future>(duration: Duration, future: F) -> std::io::Result<Timeout<F>> {
     let mut timer = Timer::new()?;
     timer.set(nix::sys::timer::Expiration::OneShot(duration.into()))?;
