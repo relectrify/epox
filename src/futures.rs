@@ -1,9 +1,10 @@
 use crate::{EpollFlags, Fd};
+use futures_util::FutureExt;
 use std::{
     io::{Error, ErrorKind},
     os::fd::{AsRawFd, BorrowedFd},
     pin::Pin,
-    task::Poll,
+    task::{Poll, ready},
 };
 
 /**
@@ -56,12 +57,14 @@ impl<T: AsRawFd + Unpin> futures_io::AsyncRead for AsyncReadFd<T> {
  */
 pub struct AsyncWriteFd<T: AsRawFd> {
     inner: Fd<T>,
+    flush_handle: Option<crate::thread::JoinFuture<std::io::Result<()>>>,
 }
 
 impl<T: AsRawFd> AsyncWriteFd<T> {
     pub fn new(inner: T) -> Result<Self, std::io::Error> {
         Ok(Self {
             inner: Fd::new(inner, EpollFlags::EPOLLOUT | EpollFlags::EPOLLET)?,
+            flush_handle: None,
         })
     }
 }
@@ -96,25 +99,34 @@ impl<T: AsRawFd + Unpin> futures_io::AsyncWrite for AsyncWriteFd<T> {
     }
 
     fn poll_flush(
-        self: Pin<&mut Self>,
-        _: &mut std::task::Context<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        /*
-         * TODO: asynchronous flush support.
-         *
-         * In Linux tcdrain() and fflush() are always blocking operations. To
-         * implement this we need to:
-         * - create a thread
-         *   - in the thread, if isatty() { tcdrain() } else fflush()
-         * - asynchronously wait for the thread to complete and pass through the
-         *   result of the flush operation.
-         *
-         * For now, let's tell callers we can't do this.
-         */
-        Poll::Ready(Err(Error::new(
-            ErrorKind::Unsupported,
-            "epox doesn't support poll_flush yet",
-        )))
+        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(self.inner.inner().as_raw_fd()) };
+
+        let flush_handle = self.flush_handle.get_or_insert_with(|| {
+            let fd = borrowed_fd.try_clone_to_owned();
+            crate::thread::spawn(|| {
+                let fd = fd?;
+                match nix::unistd::isatty(&fd) {
+                    Ok(true) => {
+                        nix::sys::termios::tcdrain(fd)?;
+                    }
+                    Ok(false) => {
+                        nix::unistd::fsync(fd)?;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+                Ok(())
+            })
+            .join()
+        });
+
+        // JoinFuture::poll will return Err if the spawned thread panicked - unwrap will
+        // continue that panic on this thread
+        let ret = ready!(flush_handle.poll_unpin(cx)).unwrap();
+        self.flush_handle = None;
+        Poll::Ready(ret)
     }
 
     fn poll_close(
