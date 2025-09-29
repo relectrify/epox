@@ -1,5 +1,6 @@
 use crate::Timer;
 use futures_util::FutureExt;
+use pin_project_lite::pin_project;
 use std::{task::Poll, time::Duration};
 
 /// Run the inner [`Future`] until it completes, or `duration` elapses -
@@ -10,11 +11,12 @@ pub fn timeout<F: Future>(duration: Duration, future: F) -> std::io::Result<Time
     Ok(Timeout { future, timer })
 }
 
-#[pin_project::pin_project]
-pub struct Timeout<F: Future> {
-    #[pin]
-    future: F,
-    timer: Timer,
+pin_project! {
+    pub struct Timeout<F: Future> {
+        #[pin]
+        future: F,
+        timer: Timer,
+    }
 }
 
 impl<F: Future> Future for Timeout<F> {
