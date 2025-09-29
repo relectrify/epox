@@ -1,9 +1,10 @@
+use pin_project_lite::pin_project;
+
 use crate::{
     Priority,
     executor::{TaskRef, exec},
     queue::QueueEntry,
 };
-use pin_project::pin_project;
 use std::{
     any::Any,
     cell::{Cell, RefCell},
@@ -17,19 +18,24 @@ use std::{
  */
 pub(crate) type Task = GenericTask<dyn AnyFuture>;
 
-#[pin_project]
-pub(crate) struct GenericTask<F: AnyFuture + ?Sized> {
-    #[pin]
-    queue_entry: QueueEntry,
-    priority: Priority,
-    /* waker for Handle which may be waiting on this task */
-    handle_waker: Cell<Waker>,
-    _not_send_not_sync: PhantomData<*mut ()>,
-    // The last field of a struct can hold a dynamically sized type.
-    // Because F: ?Sized, GenericTask<F> can be coerced into GenericTask<dyn AnyFuture>.
-    // see https://doc.rust-lang.org/nomicon/exotic-sizes.html#dynamically-sized-types-dsts
-    #[pin]
-    inner: F,
+pin_project! {
+    pub(crate) struct GenericTask<F>
+    where
+        F: AnyFuture,
+        F: ?Sized,
+    {
+        #[pin]
+        queue_entry: QueueEntry,
+        priority: Priority,
+        /* waker for Handle which may be waiting on this task */
+        handle_waker: Cell<Waker>,
+        _not_send_not_sync: PhantomData<*mut ()>,
+        // The last field of a struct can hold a dynamically sized type.
+        // Because F: ?Sized, GenericTask<F> can be coerced into GenericTask<dyn AnyFuture>.
+        // see https://doc.rust-lang.org/nomicon/exotic-sizes.html#dynamically-sized-types-dsts
+        #[pin]
+        inner: F,
+    }
 }
 
 impl Task {
@@ -76,11 +82,12 @@ pub(crate) trait AnyFuture {
     fn take_output(&self, any: &mut dyn Any);
 }
 
-#[pin_project]
-pub(crate) struct Inner<F: Future> {
-    output: Cell<Option<F::Output>>,
-    #[pin]
-    future: F,
+pin_project! {
+    pub(crate) struct Inner<F: Future> {
+        output: Cell<Option<F::Output>>,
+        #[pin]
+        future: F,
+    }
 }
 
 impl<F: Future> AnyFuture for Inner<F>

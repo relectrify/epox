@@ -8,7 +8,7 @@ use nix::{
     sys::epoll::{Epoll, EpollCreateFlags, EpollEvent, EpollFlags, EpollTimeout},
     unistd::{pipe2, read, write},
 };
-use pin_project::pin_project;
+use pin_project_lite::pin_project;
 use std::{
     cell::RefCell,
     io::Error,
@@ -79,30 +79,31 @@ fn create_epoll() -> Result<Epoll, Error> {
     Ok(Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)?)
 }
 
-/**
- * Executor
- */
-#[pin_project]
-pub(crate) struct Executor {
-    epoll: Epoll,
-    /* All tasks in the run queues have either been newly spawned or have have
-     * been woken. Either way, they need to be polled. */
-    #[pin]
-    runq_high: Queue<ExecutorTask>,
-    #[pin]
-    runq_normal: Queue<ExecutorTask>,
-    #[pin]
-    runq_low: Queue<ExecutorTask>,
-    /* Tasks in the sleep queue are pending. */
-    #[pin]
-    sleepq: Queue<ExecutorTask>,
-    /* If a task needs to be woken from another thread it's address is
-     * written to this task to be handled by the local executor. */
-    pipe_rd: OwnedFd,
-    pipe_wr: OwnedFd,
-    events: Vec<EpollEvent>,
-    task_control_flow: TaskControlFlow,
-    _not_send_not_sync: PhantomData<*mut ()>,
+pin_project! {
+    /**
+     * Executor
+     */
+    pub(crate) struct Executor {
+        epoll: Epoll,
+        /* All tasks in the run queues have either been newly spawned or have have
+        * been woken. Either way, they need to be polled. */
+        #[pin]
+        runq_high: Queue<ExecutorTask>,
+        #[pin]
+        runq_normal: Queue<ExecutorTask>,
+        #[pin]
+        runq_low: Queue<ExecutorTask>,
+        /* Tasks in the sleep queue are pending. */
+        #[pin]
+        sleepq: Queue<ExecutorTask>,
+        /* If a task needs to be woken from another thread it's address is
+        * written to this task to be handled by the local executor. */
+        pipe_rd: OwnedFd,
+        pipe_wr: OwnedFd,
+        events: Vec<EpollEvent>,
+        task_control_flow: TaskControlFlow,
+        _not_send_not_sync: PhantomData<*mut ()>,
+    }
 }
 
 impl Executor {
