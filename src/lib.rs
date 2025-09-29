@@ -4,6 +4,7 @@
 #![cfg_attr(feature = "nightly", feature(never_type))]
 
 pub mod signal;
+pub mod thread;
 pub mod time;
 pub mod timer;
 
