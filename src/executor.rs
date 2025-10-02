@@ -184,13 +184,14 @@ impl Executor {
         }
     }
 
-    fn epoll_wait(mut self: Pin<&mut Self>, timeout: EpollTimeout) -> Result<(), Error> {
+    fn epoll_wait(mut self: Pin<&mut Self>) -> Result<(), Error> {
         if self.events.is_empty() {
             return Ok(());
         }
         let n_events = {
             let this = self.as_mut().project();
-            this.epoll.wait(this.events.as_mut_slice(), timeout)
+            this.epoll
+                .wait(this.events.as_mut_slice(), EpollTimeout::NONE)
         }?;
         /* wakeup futures which have an event, adding them to runq */
         for ei in 0..n_events {
@@ -473,7 +474,7 @@ pub fn run() -> Result<(), std::io::Error> {
         }
 
         /* wait for events */
-        exec(|e| e.epoll_wait(EpollTimeout::NONE))?;
+        exec(|e| e.epoll_wait())?;
     }
 
     // drop the executor, releasing all resources it has used
