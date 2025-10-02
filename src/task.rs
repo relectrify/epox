@@ -178,12 +178,14 @@ impl YieldFuture {
 impl Future for YieldFuture {
     type Output = ();
 
-    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         if self.yielded {
             Poll::Ready(())
         } else {
             self.get_mut().yielded = true;
-            exec(|e| e.yield_now());
+            // waking this task will add it to the back of the queue
+            // see https://doc.rust-lang.org/std/task/struct.Waker.html#method.wake
+            cx.waker().wake_by_ref();
             Poll::Pending
         }
     }

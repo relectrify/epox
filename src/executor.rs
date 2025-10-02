@@ -69,8 +69,6 @@ impl Queueable for ExecutorTask {
 enum TaskControlFlow {
     /* handle task according to Poll::Pending or Poll::Ready */
     Normal,
-    /* task has yielded */
-    Yield,
     /* task has asked to shutdown the executor */
     Shutdown,
 }
@@ -153,11 +151,6 @@ impl Executor {
     pub(crate) fn abort(self: Pin<&mut Self>, task: TaskRef) {
         let this = self.project();
         this.sleepq.release(task);
-    }
-
-    pub(crate) fn yield_now(self: Pin<&mut Self>) {
-        let this = self.project();
-        *this.task_control_flow = TaskControlFlow::Yield;
     }
 
     pub(crate) fn epoll_add(
@@ -468,15 +461,6 @@ pub fn run() -> Result<(), std::io::Error> {
                         /* task pending: put it on the sleep queue */
                         exec(|e| e.sleep(t));
                     }
-                }
-                TaskControlFlow::Yield => {
-                    exec(|mut e| {
-                        /* check for events */
-                        e.as_mut().epoll_wait(EpollTimeout::ZERO)?;
-                        /* task yielded: put it back on a run queue */
-                        e.enqueue(t);
-                        Ok::<_, std::io::Error>(())
-                    })?;
                 }
                 TaskControlFlow::Shutdown => {
                     break 'outer;
