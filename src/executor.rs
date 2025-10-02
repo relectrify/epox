@@ -277,11 +277,28 @@ fn build_task_waker(task: &Weak<ExecutorTask>) -> Waker {
     fn wake(weak: &Weak<ExecutorTask>) {
         if let Some(task) = weak.upgrade() {
             exec(|e| {
-                if task.pipe_wr == e.pipe_wr.as_raw_fd() {
-                    /* same thread, enqueue directly */
+                // Waker implements Send + Sync, so this needs to wake the task from any thread.
+                // Each executor listens for tasks on a pipe, which the task stores in pipe_wr.
+                // We send the task pointer into this pipe where the corresponding thread will
+                // see it and enqueue the task.
+
+                // If we're already on the same thread we don't need to go through the kernel -
+                // we can directly enqueue the task.
+
+                // However, enqueue will need to mutably borrow the task. So if the task is
+                // already borrowed, send it into the pipe - we know no tasks are borrowed when
+                // wake_from_pipe is called from epoll_wait
+
+                // The task will already be borrowed when it wakes itself, which it is
+                // explicitly permitted to do according to the waker specification.
+
+                // See https://doc.rust-lang.org/std/task/struct.Waker.html#method.wake
+
+                // So if the task isn't already borrowed _and_ we're on the same thread as the
+                // task, we enqueue the task directly without going through the pipe.
+                if task.pipe_wr == e.pipe_wr.as_raw_fd() && task.task.try_borrow_mut().is_ok() {
                     e.enqueue(Pin::new(task));
                 } else {
-                    /* different thread, wake via pipe */
                     let p = Weak::into_raw(weak.clone());
                     let bytes = unsafe {
                         std::slice::from_raw_parts(
