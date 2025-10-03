@@ -62,17 +62,6 @@ impl Queueable for ExecutorTask {
     }
 }
 
-/*
- * Control flow for a task.
- */
-#[derive(Clone, Copy)]
-enum TaskControlFlow {
-    /* handle task according to Poll::Pending or Poll::Ready */
-    Normal,
-    /* task has asked to shutdown the executor */
-    Shutdown,
-}
-
 fn create_epoll() -> Result<Epoll, Error> {
     Ok(Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)?)
 }
@@ -99,7 +88,7 @@ pin_project! {
         pipe_rd: OwnedFd,
         pipe_wr: OwnedFd,
         events: Vec<EpollEvent>,
-        task_control_flow: TaskControlFlow,
+        shutdown: bool,
         _not_send_not_sync: PhantomData<*mut ()>,
     }
 }
@@ -116,7 +105,7 @@ impl Executor {
             pipe_rd,
             pipe_wr,
             events: Vec::new(),
-            task_control_flow: TaskControlFlow::Normal,
+            shutdown: false,
             _not_send_not_sync: PhantomData,
         });
         let this = s.as_mut().project();
@@ -235,7 +224,7 @@ impl Executor {
     }
 
     fn shutdown(self: Pin<&mut Self>) {
-        *self.project().task_control_flow = TaskControlFlow::Shutdown;
+        *self.project().shutdown = true;
     }
 
     fn wake_from_pipe(mut self: Pin<&mut Self>) -> Result<(), Error> {
@@ -443,10 +432,7 @@ pub fn spawn_with_priority<F: Future + 'static>(
  */
 pub fn run() -> Result<(), std::io::Error> {
     'outer: loop {
-        while let Some(t) = exec(|mut e| {
-            *e.as_mut().project().task_control_flow = TaskControlFlow::Normal;
-            e.highest_priority_runnable_task()
-        }) {
+        while let Some(t) = exec(|e| e.highest_priority_runnable_task()) {
             let pending = {
                 /* poll the task */
                 let mut cx = Context::from_waker(&t.waker);
@@ -456,16 +442,13 @@ pub fn run() -> Result<(), std::io::Error> {
                 t.poll(&mut cx) == Poll::Pending
             };
 
-            match exec(|e| e.task_control_flow) {
-                TaskControlFlow::Normal => {
-                    if pending {
-                        /* task pending: put it on the sleep queue */
-                        exec(|e| e.sleep(t));
-                    }
-                }
-                TaskControlFlow::Shutdown => {
-                    break 'outer;
-                }
+            if exec(|e| e.shutdown) {
+                break 'outer;
+            }
+
+            if pending {
+                /* task pending: put it on the sleep queue */
+                exec(|e| e.sleep(t));
             }
         }
         if exec(|e| e.sleepq.is_empty()) {
