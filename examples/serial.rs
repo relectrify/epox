@@ -20,9 +20,8 @@ fn main() {
     .unwrap();
     epox::spawn(async move {
         println!("waiting for serial data...");
-        serial.ready().await;
         let mut buf = [0; 32];
-        let len = serial.read(&mut buf).unwrap();
+        let len = serial.with(|fd, _events| fd.read(&mut buf)).await.unwrap();
         println!("read {:#?}", &buf[0..len]);
     });
     epox::run().unwrap();
