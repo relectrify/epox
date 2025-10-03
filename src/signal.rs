@@ -1,4 +1,4 @@
-use crate::Fd;
+use crate::{EpollFlags, Fd};
 pub use nix::sys::signal::{SigSet, Signal};
 use nix::sys::{
     signal::{SigmaskHow, sigprocmask},
@@ -41,7 +41,7 @@ impl AsyncSignal {
         nix::sys::signal::sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None)?;
 
         Ok(Self {
-            fd: Fd::new(signalfd, nix::sys::epoll::EpollFlags::EPOLLIN)?,
+            fd: Fd::new(signalfd, EpollFlags::EPOLLIN)?,
             sigset,
         })
     }
