@@ -5,10 +5,10 @@ use crate::{
 use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use std::{
     cell::RefCell,
-    io::{Error, ErrorKind},
+    io::Error,
     os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd},
     pin::Pin,
-    task::{Poll, ready},
+    task::Poll,
 };
 
 /**
@@ -25,26 +25,28 @@ impl<T: AsRawFd> Fd<T> {
     pub fn new(inner: T, events: EpollFlags) -> Result<Self, Error> {
         /* safety: fd stays open for the duration of the borrow */
         let fd = unsafe { BorrowedFd::borrow_raw(inner.as_raw_fd()) };
-        /* we set all file descriptors of interest as non-blocking -- this isn't
-         * strictly necessary but it means that if a programmer accidentally
-         * uses a file descriptor which isn't ready their program will return an
-         * error rather than unexpectedly block */
+        /* all file descriptors must be set as non-blocking as we need to
+         * receive epoll events in edge triggered mode */
         let flags = OFlag::from_bits_retain(fcntl(fd, FcntlArg::F_GETFL)?);
         fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK))?;
         let s = Self {
             inner,
             ew: Box::pin(RefCell::new(EpollWaker::default())),
         };
-        exec(|e| e.epoll_add(fd, events, s.ew.as_ref()))?;
+        /* all events must be edge triggered because tasks usually register
+         * multiple file descriptors but only wait on one at a time */
+        exec(|e| e.epoll_add(fd, events | EpollFlags::EPOLLET, s.ew.as_ref()))?;
         Ok(s)
     }
 
-    pub const fn ready(&mut self) -> FdFuture<'_, T> {
-        FdFuture { fd: self }
-    }
-
-    pub fn poll_ready(&self, cx: &std::task::Context<'_>) -> Poll<EpollFlags> {
-        self.ew.borrow_mut().poll(cx)
+    pub fn poll_with<Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error>>(
+        &mut self,
+        cx: &std::task::Context<'_>,
+        mut func: F,
+    ) -> Poll<Result<Output, std::io::Error>> {
+        self.ew
+            .borrow_mut()
+            .poll_with(cx, |events| func(&mut self.inner, events))
     }
 
     pub const fn with<Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error>>(
@@ -77,22 +79,6 @@ impl<T: AsRawFd> std::ops::Deref for Fd<T> {
 impl<T: AsRawFd> std::ops::DerefMut for Fd<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
-    }
-}
-
-/*
- * FdFuture
- */
-#[doc(hidden)]
-pub struct FdFuture<'a, T: AsRawFd> {
-    fd: &'a mut Fd<T>,
-}
-
-impl<T: AsRawFd> Future for FdFuture<'_, T> {
-    type Output = EpollFlags;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        self.fd.ew.borrow_mut().poll(cx)
     }
 }
 
@@ -151,11 +137,7 @@ impl<T: AsRawFd, Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error> +
     type Output = Result<Output, Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let events = ready!(self.fd.poll_ready(cx));
         let Self { fd, func, .. } = self.get_mut();
-        match func(fd, events) {
-            Err(e) if e.kind() == ErrorKind::WouldBlock => Poll::Pending,
-            ret => Poll::Ready(ret),
-        }
+        fd.poll_with(cx, func)
     }
 }

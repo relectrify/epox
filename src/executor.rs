@@ -338,15 +338,26 @@ pub(crate) struct EpollWaker {
 
 impl EpollWaker {
     /**
-     * Check if this EpollWaker instance has had any events since it was
-     * last polled.
+     * Handle events on this waker. Caller must return the result of the io
+     * (usually read() or write()) operation which was run on the associated
+     * file descriptor.
      */
-    pub(crate) fn poll(&mut self, cx: &std::task::Context<'_>) -> Poll<EpollFlags> {
-        self.waker.clone_from(cx.waker());
+    pub(crate) fn poll_with<T, F: FnMut(EpollFlags) -> Result<T, std::io::Error>>(
+        &mut self,
+        cx: &std::task::Context<'_>,
+        mut func: F,
+    ) -> Poll<Result<T, std::io::Error>> {
         if self.events.is_empty() {
-            Poll::Pending
-        } else {
-            Poll::Ready(std::mem::replace(&mut self.events, EpollFlags::empty()))
+            self.waker.clone_from(cx.waker());
+            return Poll::Pending;
+        }
+        match func(self.events) {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                self.waker.clone_from(cx.waker());
+                self.events = EpollFlags::empty();
+                Poll::Pending
+            }
+            res => Poll::Ready(res),
         }
     }
 }

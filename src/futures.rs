@@ -3,7 +3,7 @@ use std::{
     io::{Error, ErrorKind},
     os::fd::{AsRawFd, BorrowedFd},
     pin::Pin,
-    task::{Poll, ready},
+    task::Poll,
 };
 
 /**
@@ -35,20 +35,19 @@ impl<T: AsRawFd> std::ops::DerefMut for AsyncReadFd<T> {
     }
 }
 
-impl<T: AsRawFd> futures_io::AsyncRead for AsyncReadFd<T> {
+impl<T: AsRawFd + Unpin> futures_io::AsyncRead for AsyncReadFd<T> {
     fn poll_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
-        ready!(self.inner.poll_ready(cx));
-
-        /* safety: we already know the fd is valid */
-        let num_read = nix::unistd::read(
-            unsafe { BorrowedFd::borrow_raw(self.inner.as_raw_fd()) },
-            buf,
-        )?;
-        Poll::Ready(Ok(num_read))
+        self.inner.poll_with(cx, |fd, _events| {
+            /* safety: we already know the fd is valid */
+            Ok(nix::unistd::read(
+                unsafe { BorrowedFd::borrow_raw(fd.as_raw_fd()) },
+                buf,
+            )?)
+        })
     }
 }
 
@@ -81,25 +80,19 @@ impl<T: AsRawFd> std::ops::DerefMut for AsyncWriteFd<T> {
     }
 }
 
-impl<T: AsRawFd> futures_io::AsyncWrite for AsyncWriteFd<T> {
+impl<T: AsRawFd + Unpin> futures_io::AsyncWrite for AsyncWriteFd<T> {
     fn poll_write(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        /* write needs to be in a loop because in theory it can return
-         * EWOULDBLOCK multiple times in a row if something else is writing to
-         * the same kernel object backing the file descriptor */
-        loop {
+        self.inner.poll_with(cx, |fd, _events| {
             /* safety: we already know the fd is valid */
-            match nix::unistd::write(
-                unsafe { BorrowedFd::borrow_raw(self.inner.as_raw_fd()) },
+            Ok(nix::unistd::write(
+                unsafe { BorrowedFd::borrow_raw(fd.as_raw_fd()) },
                 buf,
-            ) {
-                Err(nix::errno::Errno::EWOULDBLOCK) => ready!(self.inner.poll_ready(cx)),
-                res => return Poll::Ready(res.map_err(Into::into)),
-            };
-        }
+            )?)
+        })
     }
 
     fn poll_flush(
