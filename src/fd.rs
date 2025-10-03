@@ -55,6 +55,14 @@ impl<T: AsRawFd> Fd<T> {
     ) -> FdWithFuture<'_, T, Output, F> {
         FdWithFuture { fd: self, func }
     }
+
+    pub const fn inner(&self) -> &T {
+        &self.inner
+    }
+
+    pub const fn inner_mut(&mut self) -> &mut T {
+        &mut self.inner
+    }
 }
 
 impl<T: AsRawFd> Drop for Fd<T> {
@@ -65,20 +73,6 @@ impl<T: AsRawFd> Drop for Fd<T> {
         // will fail
         // this is expected and will happen after Executor::shutdown() is called
         let _ = exec(|e| e.epoll_del(fd));
-    }
-}
-
-impl<T: AsRawFd> std::ops::Deref for Fd<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl<T: AsRawFd> std::ops::DerefMut for Fd<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
     }
 }
 
