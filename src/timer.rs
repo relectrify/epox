@@ -22,7 +22,9 @@ impl Timer {
     }
 
     pub fn set(&mut self, expiration: Expiration) -> Result<(), Error> {
-        self.fd.set(expiration, TimerSetTimeFlags::empty())?;
+        self.fd
+            .inner()
+            .set(expiration, TimerSetTimeFlags::empty())?;
         Ok(())
     }
 
