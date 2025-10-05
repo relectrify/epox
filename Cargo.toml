@@ -18,11 +18,11 @@ pin-project-lite = "0.2"
 rustc_version = "0.4"
 
 [dev-dependencies]
-serialport = "4"
-clap = { version = "4", features = ["derive"] }
-futures-lite = "2"
-futures = "0"
 async-channel = "2.5"
+clap = { version = "4", features = ["derive"] }
+futures = "0"
+futures-lite = "2"
+serialport = "4"
 
 [lints.rust]
 unreachable-pub = "warn"
