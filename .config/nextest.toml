@@ -2,11 +2,11 @@ experimental = ["wrapper-scripts"]
 
 [scripts.wrapper.valgrind]
 command = [
-  'valgrind',
-  '--leak-check=full',
-  '--errors-for-leak-kinds=definite',
-  "--track-fds=yes",
-  '--error-exitcode=69',
+	'valgrind',
+	'--leak-check=full',
+	'--errors-for-leak-kinds=definite',
+	"--track-fds=yes",
+	'--error-exitcode=69',
 ]
 
 [[profile.default.scripts]]
