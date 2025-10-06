@@ -62,6 +62,27 @@ impl Queueable for ExecutorTask {
         /* safety: self is pinned therefore queue_entry is pinned */
         f(unsafe { Pin::new_unchecked(queue_entry) })
     }
+
+    fn from_entry(entry: Pin<&QueueEntry>) -> Pin<Arc<Self>> {
+        /* this optimises into a constant offset */
+        let refcell_inner_offset = {
+            let refcell = RefCell::new(QueueEntry::new());
+            let refcell_p = std::ptr::from_ref(&*refcell.borrow()).cast::<u8>();
+            let inner_p = std::ptr::from_ref(&refcell).cast::<u8>();
+            /* safety: inner_p must be >= refcell_p */
+            unsafe { refcell_p.offset_from_unsigned(inner_p) }
+        };
+        let queue_entry_offset = std::mem::offset_of!(Self, queue_entry) + refcell_inner_offset;
+        /* safety: pointer arithmetic :) */
+        let task = unsafe {
+            std::ptr::from_ref(&*entry.as_ref())
+                .cast::<u8>()
+                .sub(queue_entry_offset)
+                .cast()
+        };
+        /* safety: task is an Arc whose contents do not move */
+        unsafe { Pin::new_unchecked(Arc::from_raw(task)) }
+    }
 }
 
 fn create_epoll() -> Result<Epoll, Error> {
