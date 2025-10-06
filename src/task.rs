@@ -1,10 +1,8 @@
-use pin_project_lite::pin_project;
-
 use crate::{
     Priority,
     executor::{TaskRef, exec},
-    queue::QueueEntry,
 };
+use pin_project_lite::pin_project;
 use std::{
     any::Any,
     cell::{Cell, RefCell},
@@ -24,8 +22,6 @@ pin_project! {
         F: AnyFuture,
         F: ?Sized,
     {
-        #[pin]
-        queue_entry: QueueEntry,
         priority: Priority,
         /* waker for Handle which may be waiting on this task */
         handle_waker: Cell<Waker>,
@@ -47,7 +43,6 @@ impl Task {
         F::Output: 'static,
     {
         Box::pin(RefCell::new(GenericTask::<Inner<F>> {
-            queue_entry: QueueEntry::new(),
             priority,
             handle_waker: Cell::new(Waker::noop().clone()),
             _not_send_not_sync: PhantomData,
@@ -70,10 +65,6 @@ impl Task {
 
     pub(crate) const fn priority(&self) -> Priority {
         self.priority
-    }
-
-    pub(crate) fn queue_entry(self: Pin<&mut Self>) -> Pin<&mut QueueEntry> {
-        self.project().queue_entry
     }
 }
 

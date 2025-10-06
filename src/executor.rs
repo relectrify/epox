@@ -45,20 +45,22 @@ pub(crate) fn exec<R, F: FnOnce(Pin<&mut Executor>) -> R>(f: F) -> R {
  * TODO: use one allocation for tasks
  */
 pub(crate) struct ExecutorTask {
+    queue_entry: RefCell<QueueEntry>,
     /* write the task's address to this pipe to wake the task */
     pipe_wr: RawFd,
     /* use this waker to wake the task */
     waker: Waker,
     pub(crate) task: Pin<Box<RefCell<Task>>>,
+    /* this struct must be pinned as queue requires pinned entries */
+    _pinned: std::marker::PhantomPinned,
 }
 pub(crate) type TaskRef = Pin<Arc<ExecutorTask>>;
 
 impl Queueable for ExecutorTask {
     fn with_entry<R, F: FnMut(Pin<&mut QueueEntry>) -> R>(self: Pin<&Self>, mut f: F) -> R {
-        let mut s = self.task.borrow_mut();
-        /* safety: self is pinned therefore borrowed self is also pinned */
-        let s = unsafe { Pin::new_unchecked(&mut *s) };
-        f(s.queue_entry())
+        let queue_entry = &mut *self.queue_entry.borrow_mut();
+        /* safety: self is pinned therefore queue_entry is pinned */
+        f(unsafe { Pin::new_unchecked(queue_entry) })
     }
 }
 
@@ -128,11 +130,15 @@ impl Executor {
         future: F,
         priority: Priority,
     ) -> crate::task::Handle<F::Output> {
-        let task = Pin::new(Arc::new_cyclic(|me| ExecutorTask {
+        let task = Arc::new_cyclic(|me| ExecutorTask {
+            queue_entry: RefCell::new(QueueEntry::new()),
             pipe_wr: self.pipe_wr.as_raw_fd(),
             waker: build_task_waker(me),
             task: Task::new_pinned_boxed_refcell(future, priority),
-        }));
+            _pinned: std::marker::PhantomPinned,
+        });
+        /* safety: Arc is missing a way to build a pinned cyclic */
+        let task = unsafe { Pin::new_unchecked(task) };
         self.enqueue(task.clone());
         crate::task::Handle::new(task)
     }
@@ -199,8 +205,10 @@ impl Executor {
             if !waker.waker.data().is_null() {
                 /* don't call waker.waker.wake_by_ref() as the executor is already borrowed! */
                 let weak = weak_from_raw(waker.waker.data());
-                if let Some(p) = weak.upgrade() {
-                    self.as_mut().enqueue(Pin::new(p));
+                if let Some(task) = weak.upgrade() {
+                    /* safety: task is an Arc whose contents do not move */
+                    let task = unsafe { Pin::new_unchecked(task) };
+                    self.as_mut().enqueue(task);
                 }
                 let _ = Weak::into_raw(weak);
             }
@@ -248,7 +256,9 @@ impl Executor {
         let weak = weak_from_raw(unsafe { buf.assume_init() });
         /* wake up task */
         if let Some(task) = weak.upgrade() {
-            self.as_mut().enqueue(Pin::new(task));
+            /* safety: task is an Arc whose contents do not move */
+            let task = unsafe { Pin::new_unchecked(task) };
+            self.as_mut().enqueue(task);
         }
         Ok(())
     }
@@ -288,7 +298,9 @@ fn build_task_waker(task: &Weak<ExecutorTask>) -> Waker {
                 // So if the task isn't already borrowed _and_ we're on the same thread as the
                 // task, we enqueue the task directly without going through the pipe.
                 if task.pipe_wr == e.pipe_wr.as_raw_fd() && task.task.try_borrow_mut().is_ok() {
-                    e.enqueue(Pin::new(task));
+                    /* safety: task is an Arc whose contents do not move */
+                    let task = unsafe { Pin::new_unchecked(task) };
+                    e.enqueue(task);
                 } else {
                     let p = Weak::into_raw(weak.clone());
                     let bytes = (p as usize).to_ne_bytes();
