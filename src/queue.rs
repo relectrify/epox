@@ -40,7 +40,6 @@ impl<T: Queueable> Queue<T> {
      *   end of queue, without changing reference count.
      */
     pub(crate) fn push(mut self: Pin<&mut Self>, entry: Pin<Arc<T>>) {
-        let outer = std::ptr::from_ref(entry.as_ref().get_ref());
         let was_queued = entry.with_entry(|mut e| {
             let was_queued = e.is_queued();
             e.as_mut().unqueue();
@@ -51,7 +50,6 @@ impl<T: Queueable> Queue<T> {
                 e.prev = &raw mut s.head;
                 (*s.head.next).prev = e;
                 s.head.next = e;
-                e.outer = outer.cast::<()>();
             }
             was_queued
         });
@@ -76,7 +74,7 @@ impl<T: Queueable> Queue<T> {
             /* remove it from the list */
             entry.as_mut().unqueue();
             /* reconstruct reference */
-            unsafe { Pin::new_unchecked(Arc::from_raw(entry.outer.cast::<T>())) }
+            T::from_entry(entry.as_ref())
         })
     }
 
@@ -87,10 +85,10 @@ impl<T: Queueable> Queue<T> {
      * from the queue.
      */
     pub(crate) fn release(self: Pin<&mut Self>, entry: Pin<Arc<T>>) {
-        entry.as_ref().with_entry(|mut e| {
+        entry.with_entry(|mut e| {
             if e.is_queued() {
                 /* reconstruct then drop reference */
-                let _ = unsafe { Pin::new_unchecked(Arc::from_raw(e.outer.cast::<T>())) };
+                let _ = T::from_entry(e.as_ref());
             }
             e.as_mut().unqueue();
         });
@@ -115,9 +113,6 @@ impl<T: Queueable> Drop for Queue<T> {
 pub(crate) struct QueueEntry {
     prev: *mut QueueEntry,
     next: *mut QueueEntry,
-    /* TODO: we only need to store an outer pointer because we have a boxed
-     * value inside the Arc. When we ThinArc we can remove this. */
-    outer: *const (),
     _pinned: PhantomPinned,
 }
 
@@ -126,7 +121,6 @@ impl QueueEntry {
         Self {
             prev: std::ptr::null_mut(),
             next: std::ptr::null_mut(),
-            outer: std::ptr::null_mut(),
             _pinned: PhantomPinned,
         }
     }
@@ -153,4 +147,5 @@ impl QueueEntry {
 
 pub(crate) trait Queueable {
     fn with_entry<R, F: FnMut(Pin<&mut QueueEntry>) -> R>(self: &Pin<Arc<Self>>, f: F) -> R;
+    fn from_entry(entry: Pin<&QueueEntry>) -> Pin<Arc<Self>>;
 }
