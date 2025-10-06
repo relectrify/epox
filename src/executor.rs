@@ -199,7 +199,9 @@ impl Executor {
             if !waker.waker.data().is_null() {
                 /* don't call waker.waker.wake_by_ref() as the executor is already borrowed! */
                 let weak = weak_from_raw(waker.waker.data());
-                self.as_mut().enqueue(Pin::new(weak.upgrade().unwrap()));
+                if let Some(p) = weak.upgrade() {
+                    self.as_mut().enqueue(Pin::new(p));
+                }
                 let _ = Weak::into_raw(weak);
             }
         }
@@ -289,14 +291,9 @@ fn build_task_waker(task: &Weak<ExecutorTask>) -> Waker {
                     e.enqueue(Pin::new(task));
                 } else {
                     let p = Weak::into_raw(weak.clone());
-                    let bytes = unsafe {
-                        std::slice::from_raw_parts(
-                            std::ptr::from_ref(&(p as usize)).cast::<u8>(),
-                            std::mem::size_of_val(&p),
-                        )
-                    };
+                    let bytes = (p as usize).to_ne_bytes();
                     /* safety: fd stays valid for duration of call */
-                    write(unsafe { BorrowedFd::borrow_raw(task.pipe_wr) }, bytes).unwrap();
+                    write(unsafe { BorrowedFd::borrow_raw(task.pipe_wr) }, &bytes).unwrap();
                 }
             });
         }
