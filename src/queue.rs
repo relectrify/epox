@@ -41,7 +41,7 @@ impl<T: Queueable> Queue<T> {
      */
     pub(crate) fn push(mut self: Pin<&mut Self>, entry: Pin<Arc<T>>) {
         let outer = std::ptr::from_ref(entry.as_ref().get_ref());
-        let was_queued = entry.as_ref().with_entry(|mut e| {
+        let was_queued = entry.with_entry(|mut e| {
             let was_queued = e.is_queued();
             e.as_mut().unqueue();
             unsafe {
@@ -152,5 +152,5 @@ impl QueueEntry {
 }
 
 pub(crate) trait Queueable {
-    fn with_entry<R, F: FnMut(Pin<&mut QueueEntry>) -> R>(self: Pin<&Self>, f: F) -> R;
+    fn with_entry<R, F: FnMut(Pin<&mut QueueEntry>) -> R>(self: &Pin<Arc<Self>>, f: F) -> R;
 }
