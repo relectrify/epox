@@ -182,11 +182,12 @@ impl Executor {
             this.epoll
                 .wait(this.events.as_mut_slice(), EpollTimeout::NONE)
         }?;
+        let mut check_pipe = false;
         /* wakeup futures which have an event, adding them to runq */
         for ei in 0..n_events {
             let e = self.events[ei];
             if e.data() == 0 {
-                self.as_mut().wake_from_pipe()?;
+                check_pipe = true;
                 continue;
             }
             /* safety: e.data() is the result of std::ptr::from_ref(Pin::into_inner) */
@@ -202,6 +203,11 @@ impl Executor {
                 let _ = Weak::into_raw(weak);
             }
         }
+
+        if check_pipe {
+            self.as_mut().wake_from_pipe()?;
+        }
+
         Ok(())
     }
 
