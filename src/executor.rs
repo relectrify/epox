@@ -57,7 +57,7 @@ pub(crate) struct ExecutorTask {
 pub(crate) type TaskRef = Pin<Arc<ExecutorTask>>;
 
 impl Queueable for ExecutorTask {
-    fn with_entry<R, F: FnMut(Pin<&mut QueueEntry>) -> R>(self: Pin<&Self>, mut f: F) -> R {
+    fn with_entry<R, F: FnMut(Pin<&mut QueueEntry>) -> R>(self: &Pin<Arc<Self>>, mut f: F) -> R {
         let queue_entry = &mut *self.queue_entry.borrow_mut();
         /* safety: self is pinned therefore queue_entry is pinned */
         f(unsafe { Pin::new_unchecked(queue_entry) })
