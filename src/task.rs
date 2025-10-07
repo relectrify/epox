@@ -5,7 +5,7 @@ use std::{
     cell::{Cell, RefCell},
     marker::PhantomData,
     pin::Pin,
-    task::{Context, Poll, Waker},
+    task::{Context, Poll},
 };
 
 /**
@@ -19,8 +19,6 @@ pin_project! {
         F: AnyFuture,
         F: ?Sized,
     {
-        /* waker for Handle which may be waiting on this task */
-        handle_waker: Cell<Waker>,
         _not_send_not_sync: PhantomData<*mut ()>,
         // The last field of a struct can hold a dynamically sized type.
         // Because F: ?Sized, GenericTask<F> can be coerced into GenericTask<dyn AnyFuture>.
@@ -38,7 +36,6 @@ impl Task {
         F::Output: 'static,
     {
         Box::pin(RefCell::new(GenericTask::<Inner<F>> {
-            handle_waker: Cell::new(Waker::noop().clone()),
             _not_send_not_sync: PhantomData,
             inner: Inner {
                 output: Cell::new(None),
@@ -48,13 +45,7 @@ impl Task {
     }
 
     pub(crate) fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-        let res = self.as_mut().project().inner.poll(cx);
-        if res.is_ready() {
-            self.handle_waker
-                .replace(Waker::noop().clone())
-                .wake_by_ref();
-        }
-        res
+        self.as_mut().project().inner.poll(cx)
     }
 }
 
@@ -132,11 +123,7 @@ impl<T: 'static> Future for Handle<T> {
         if let Some(result) = self.result() {
             Poll::Ready(result)
         } else {
-            self.taskref
-                .task
-                .borrow()
-                .handle_waker
-                .set(cx.waker().clone());
+            self.taskref.handle_waker.set(cx.waker().clone());
             Poll::Pending
         }
     }
