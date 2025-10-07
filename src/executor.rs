@@ -10,7 +10,7 @@ use nix::{
 };
 use pin_project_lite::pin_project;
 use std::{
-    cell::RefCell,
+    cell::{RefCell, UnsafeCell},
     io::Error,
     marker::PhantomData,
     os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd},
@@ -45,7 +45,7 @@ pub(crate) fn exec<R, F: FnOnce(Pin<&mut Executor>) -> R>(f: F) -> R {
  * TODO: use one allocation for tasks
  */
 pub(crate) struct ExecutorTask {
-    queue_entry: RefCell<QueueEntry>,
+    queue_entry: UnsafeCell<QueueEntry>,
     /* write the task's address to this pipe to wake the task */
     pipe_wr: RawFd,
     /* use this waker to wake the task */
@@ -59,21 +59,20 @@ pub(crate) type TaskRef = Pin<Arc<ExecutorTask>>;
 
 impl Queueable for ExecutorTask {
     fn with_entry<R, F: FnMut(Pin<&mut QueueEntry>) -> R>(self: &Pin<Arc<Self>>, mut f: F) -> R {
-        let queue_entry = &mut *self.queue_entry.borrow_mut();
         /* safety: self is pinned therefore queue_entry is pinned */
-        f(unsafe { Pin::new_unchecked(queue_entry) })
+        f(unsafe { Pin::new_unchecked(&mut *self.queue_entry.get()) })
     }
 
     fn from_entry(entry: Pin<&QueueEntry>) -> Pin<Arc<Self>> {
         /* this optimises into a constant offset */
-        let refcell_inner_offset = {
-            let refcell = RefCell::new(QueueEntry::new());
-            let refcell_p = std::ptr::from_ref(&*refcell.borrow()).cast::<u8>();
-            let inner_p = std::ptr::from_ref(&refcell).cast::<u8>();
-            /* safety: inner_p must be >= refcell_p */
-            unsafe { refcell_p.offset_from_unsigned(inner_p) }
+        let cell_inner_offset = {
+            let cell = UnsafeCell::new(QueueEntry::new());
+            let inner_p = cell.get().cast::<u8>();
+            let cell_p = std::ptr::from_ref(&cell).cast::<u8>();
+            /* safety: inner_p must be >= cell_p */
+            unsafe { inner_p.offset_from_unsigned(cell_p) }
         };
-        let queue_entry_offset = std::mem::offset_of!(Self, queue_entry) + refcell_inner_offset;
+        let queue_entry_offset = std::mem::offset_of!(Self, queue_entry) + cell_inner_offset;
         /* safety: pointer arithmetic :) */
         let task = unsafe {
             std::ptr::from_ref(&*entry.as_ref())
@@ -153,7 +152,7 @@ impl Executor {
         priority: Priority,
     ) -> crate::task::Handle<F::Output> {
         let task = Arc::new_cyclic(|me| ExecutorTask {
-            queue_entry: RefCell::new(QueueEntry::new()),
+            queue_entry: UnsafeCell::new(QueueEntry::new()),
             pipe_wr: self.pipe_wr.as_raw_fd(),
             waker: build_task_waker(me),
             priority,
