@@ -504,6 +504,9 @@ pub fn run() -> Result<(), std::io::Error> {
                 /* task pending and not runnable: put it on the sleep queue */
                 exec(|e| e.sleep(t));
             }
+
+            /* check for events which happened while task was running */
+            exec(|e| e.epoll_wait(EpollTimeout::ZERO))?;
         }
         if exec(|e| e.sleepq.is_empty()) {
             /* all tasks have completed */
