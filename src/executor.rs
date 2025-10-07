@@ -87,6 +87,12 @@ impl Queueable for ExecutorTask {
     }
 }
 
+impl ExecutorTask {
+    fn is_queued(self: &Pin<Arc<Self>>) -> bool {
+        self.with_entry(|e| e.is_queued())
+    }
+}
+
 fn create_epoll() -> Result<Epoll, Error> {
     Ok(Epoll::new(EpollCreateFlags::EPOLL_CLOEXEC)?)
 }
@@ -204,21 +210,19 @@ impl Executor {
         }
     }
 
-    fn epoll_wait(mut self: Pin<&mut Self>) -> Result<(), Error> {
+    fn epoll_wait(mut self: Pin<&mut Self>, timeout: EpollTimeout) -> Result<(), Error> {
         if self.events.is_empty() {
             return Ok(());
         }
         let n_events = {
             let this = self.as_mut().project();
-            this.epoll
-                .wait(this.events.as_mut_slice(), EpollTimeout::NONE)
+            this.epoll.wait(this.events.as_mut_slice(), timeout)
         }?;
-        let mut check_pipe = false;
         /* wakeup futures which have an event, adding them to runq */
         for ei in 0..n_events {
             let e = self.events[ei];
             if e.data() == 0 {
-                check_pipe = true;
+                self.as_mut().wake_from_pipe()?;
                 continue;
             }
             /* safety: e.data() is the result of std::ptr::from_ref(Pin::into_inner) */
@@ -238,13 +242,6 @@ impl Executor {
                 let _ = Weak::into_raw(weak);
             }
         }
-
-        /* this needs to happen last so that a task which wakes itself to yield
-         * will run after all other tasks at the same priority */
-        if check_pipe {
-            self.as_mut().wake_from_pipe()?;
-        }
-
         Ok(())
     }
 
@@ -303,7 +300,7 @@ fn build_task_waker(task: &Weak<ExecutorTask>) -> Waker {
 
     fn wake(weak: &Weak<ExecutorTask>) {
         if let Some(task) = weak.upgrade() {
-            exec(|e| {
+            exec(|mut e| {
                 // Waker implements Send + Sync, so this needs to be able to
                 // wake the task from any thread. Each executor listens for
                 // tasks on a pipe, which the task stores in pipe_wr. We send
@@ -313,19 +310,14 @@ fn build_task_waker(task: &Weak<ExecutorTask>) -> Waker {
                 // If we're already on the same thread we don't need to go
                 // through the kernel - we can directly enqueue the task.
 
-                // The task will already be borrowed if it wakes itself, which
-                // it is explicitly permitted to do according to the waker
-                // specification.
+                // A task is allowed to wake itself, see:
                 // See https://doc.rust-lang.org/std/task/struct.Waker.html#method.wake
-
-                // Our implementation of yield depends on the task ending up
-                // at the end of the run queue if it wakes itself. Rather than
-                // building complex logic we just use the pipe to achieve this.
-
-                // So if the task isn't already borrowed and we're on the same
-                // thread as the task, we enqueue the task directly without
-                // going through the pipe.
-                if task.pipe_wr == e.pipe_wr.as_raw_fd() && task.task.try_borrow_mut().is_ok() {
+                if task.pipe_wr == e.pipe_wr.as_raw_fd() {
+                    if task.task.try_borrow().is_err() {
+                        /* task woke itself -- check for events now to make sure
+                         * the task runs again after any new events */
+                        let _ = e.as_mut().epoll_wait(EpollTimeout::ZERO);
+                    }
                     /* safety: task is an Arc whose contents do not move */
                     let task = unsafe { Pin::new_unchecked(task) };
                     e.enqueue(task);
@@ -507,8 +499,9 @@ pub fn run() -> Result<(), std::io::Error> {
                 break 'outer;
             }
 
-            if pending {
-                /* task pending: put it on the sleep queue */
+            /* if task is still queued it yielded and is in a run queue */
+            if pending && !t.is_queued() {
+                /* task pending and not runnable: put it on the sleep queue */
                 exec(|e| e.sleep(t));
             }
         }
@@ -518,7 +511,7 @@ pub fn run() -> Result<(), std::io::Error> {
         }
 
         /* wait for events */
-        exec(|e| e.epoll_wait())?;
+        exec(|e| e.epoll_wait(EpollTimeout::NONE))?;
     }
 
     // drop the executor, releasing all resources it has used

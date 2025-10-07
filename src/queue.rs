@@ -140,7 +140,7 @@ impl QueueEntry {
     /**
      * Test if entry is queued.
      */
-    const fn is_queued(&self) -> bool {
+    pub(crate) const fn is_queued(&self) -> bool {
         !self.prev.is_null()
     }
 }
