@@ -10,7 +10,7 @@ use nix::{
 };
 use pin_project_lite::pin_project;
 use std::{
-    cell::{RefCell, UnsafeCell},
+    cell::{Cell, RefCell, UnsafeCell},
     io::Error,
     marker::PhantomData,
     os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd},
@@ -50,6 +50,8 @@ pub(crate) struct ExecutorTask {
     pipe_wr: RawFd,
     /* use this waker to wake the task */
     waker: Waker,
+    /* use this waker to wake a Handle which may be waiting on this task */
+    pub(crate) handle_waker: Cell<Waker>,
     priority: Priority,
     pub(crate) task: Pin<Box<RefCell<Task>>>,
     /* this struct must be pinned as queue requires pinned entries */
@@ -155,6 +157,7 @@ impl Executor {
             queue_entry: UnsafeCell::new(QueueEntry::new()),
             pipe_wr: self.pipe_wr.as_raw_fd(),
             waker: build_task_waker(me),
+            handle_waker: Cell::new(Waker::noop().clone()),
             priority,
             task: Task::new_pinned_boxed_refcell(future),
             _pinned: std::marker::PhantomPinned,
@@ -487,10 +490,17 @@ pub fn run() -> Result<(), std::io::Error> {
             let pending = {
                 /* poll the task */
                 let mut cx = Context::from_waker(&t.waker);
-                let mut t = t.task.borrow_mut();
+                let mut ti = t.task.borrow_mut();
                 /* safety: t is pinned therefore its deref is also pinned */
-                let t = unsafe { Pin::new_unchecked(&mut *t) };
-                t.poll(&mut cx) == Poll::Pending
+                let ti = unsafe { Pin::new_unchecked(&mut *ti) };
+                match ti.poll(&mut cx) {
+                    Poll::Pending => true,
+                    Poll::Ready(()) => {
+                        /* wakeup handle potentially waiting on this task */
+                        t.handle_waker.replace(Waker::noop().clone()).wake_by_ref();
+                        false
+                    }
+                }
             };
 
             if exec(|e| e.shutdown) {
