@@ -237,6 +237,8 @@ impl Executor {
             }
         }
 
+        /* this needs to happen last so that a task which wakes itself to yield
+         * will run after all other tasks at the same priority */
         if check_pipe {
             self.as_mut().wake_from_pipe()?;
         }
@@ -300,25 +302,27 @@ fn build_task_waker(task: &Weak<ExecutorTask>) -> Waker {
     fn wake(weak: &Weak<ExecutorTask>) {
         if let Some(task) = weak.upgrade() {
             exec(|e| {
-                // Waker implements Send + Sync, so this needs to wake the task from any thread.
-                // Each executor listens for tasks on a pipe, which the task stores in pipe_wr.
-                // We send the task pointer into this pipe where the corresponding thread will
-                // see it and enqueue the task.
+                // Waker implements Send + Sync, so this needs to be able to
+                // wake the task from any thread. Each executor listens for
+                // tasks on a pipe, which the task stores in pipe_wr. We send
+                // the task pointer into this pipe where the corresponding
+                // thread will see it and enqueue the task.
 
-                // If we're already on the same thread we don't need to go through the kernel -
-                // we can directly enqueue the task.
+                // If we're already on the same thread we don't need to go
+                // through the kernel - we can directly enqueue the task.
 
-                // However, enqueue will need to mutably borrow the task. So if the task is
-                // already borrowed, send it into the pipe - we know no tasks are borrowed when
-                // wake_from_pipe is called from epoll_wait
-
-                // The task will already be borrowed when it wakes itself, which it is
-                // explicitly permitted to do according to the waker specification.
-
+                // The task will already be borrowed if it wakes itself, which
+                // it is explicitly permitted to do according to the waker
+                // specification.
                 // See https://doc.rust-lang.org/std/task/struct.Waker.html#method.wake
 
-                // So if the task isn't already borrowed _and_ we're on the same thread as the
-                // task, we enqueue the task directly without going through the pipe.
+                // Our implementation of yield depends on the task ending up
+                // at the end of the run queue if it wakes itself. Rather than
+                // building complex logic we just use the pipe to achieve this.
+
+                // So if the task isn't already borrowed and we're on the same
+                // thread as the task, we enqueue the task directly without
+                // going through the pipe.
                 if task.pipe_wr == e.pipe_wr.as_raw_fd() && task.task.try_borrow_mut().is_ok() {
                     /* safety: task is an Arc whose contents do not move */
                     let task = unsafe { Pin::new_unchecked(task) };
