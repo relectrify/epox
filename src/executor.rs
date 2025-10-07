@@ -50,6 +50,7 @@ pub(crate) struct ExecutorTask {
     pipe_wr: RawFd,
     /* use this waker to wake the task */
     waker: Waker,
+    priority: Priority,
     pub(crate) task: Pin<Box<RefCell<Task>>>,
     /* this struct must be pinned as queue requires pinned entries */
     _pinned: std::marker::PhantomPinned,
@@ -155,7 +156,8 @@ impl Executor {
             queue_entry: RefCell::new(QueueEntry::new()),
             pipe_wr: self.pipe_wr.as_raw_fd(),
             waker: build_task_waker(me),
-            task: Task::new_pinned_boxed_refcell(future, priority),
+            priority,
+            task: Task::new_pinned_boxed_refcell(future),
             _pinned: std::marker::PhantomPinned,
         });
         /* safety: Arc is missing a way to build a pinned cyclic */
@@ -243,8 +245,7 @@ impl Executor {
     }
 
     fn enqueue(self: Pin<&mut Self>, task: TaskRef) {
-        let priority = task.task.borrow().priority();
-        self.runq(priority).push(task);
+        self.runq(task.priority).push(task);
     }
 
     fn sleep(self: Pin<&mut Self>, task: TaskRef) {

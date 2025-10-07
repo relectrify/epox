@@ -1,7 +1,4 @@
-use crate::{
-    Priority,
-    executor::{TaskRef, exec},
-};
+use crate::executor::{TaskRef, exec};
 use pin_project_lite::pin_project;
 use std::{
     any::Any,
@@ -22,7 +19,6 @@ pin_project! {
         F: AnyFuture,
         F: ?Sized,
     {
-        priority: Priority,
         /* waker for Handle which may be waiting on this task */
         handle_waker: Cell<Waker>,
         _not_send_not_sync: PhantomData<*mut ()>,
@@ -37,13 +33,11 @@ pin_project! {
 impl Task {
     pub(crate) fn new_pinned_boxed_refcell<F: Future + 'static>(
         future: F,
-        priority: Priority,
     ) -> Pin<Box<RefCell<Self>>>
     where
         F::Output: 'static,
     {
         Box::pin(RefCell::new(GenericTask::<Inner<F>> {
-            priority,
             handle_waker: Cell::new(Waker::noop().clone()),
             _not_send_not_sync: PhantomData,
             inner: Inner {
@@ -61,10 +55,6 @@ impl Task {
                 .wake_by_ref();
         }
         res
-    }
-
-    pub(crate) const fn priority(&self) -> Priority {
-        self.priority
     }
 }
 
