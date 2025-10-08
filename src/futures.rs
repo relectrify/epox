@@ -54,6 +54,10 @@ impl<T: AsRawFd + Unpin> futures_io::AsyncRead for AsyncReadFd<T> {
 
 /**
  * Wrapper which implements [`futures_io::AsyncWrite`]
+ *
+ * [`poll_close()`] is unsupported and will always return an error.
+ *
+ * [`poll_close()`]: futures_io::AsyncWrite::poll_close()
  */
 pub struct AsyncWriteFd<T: AsRawFd> {
     inner: Fd<T>,
@@ -129,6 +133,7 @@ impl<T: AsRawFd + Unpin> futures_io::AsyncWrite for AsyncWriteFd<T> {
         Poll::Ready(ret)
     }
 
+    /// Not supported - will always return an error.
     fn poll_close(
         self: Pin<&mut Self>,
         _: &mut std::task::Context<'_>,
