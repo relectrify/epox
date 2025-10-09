@@ -216,7 +216,17 @@ impl Executor {
         }
         let n_events = {
             let this = self.as_mut().project();
-            this.epoll.wait(this.events.as_mut_slice(), timeout)
+            this.epoll
+                .wait(this.events.as_mut_slice(), timeout)
+                .or_else(|e| {
+                    if e == nix::Error::EINTR {
+                        /* epoll_wait returns EINTR even if the interrupting
+                         * signal handler is set to SA_RESTART, ignore this */
+                        Ok(0)
+                    } else {
+                        Err(e)
+                    }
+                })
         }?;
         /* wakeup futures which have an event, adding them to runq */
         for ei in 0..n_events {
