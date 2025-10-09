@@ -126,6 +126,8 @@ impl<T: AsRawFd + Unpin> futures_io::AsyncWrite for AsyncWriteFd<T> {
          *
          * In Linux, close is asynchronous if O_NONBLOCK is set. To implement
          * this we need to:
+         * - determine if we are closing the last file descriptor referring to the
+         *   file description in question (need to parse /proc/self/fd?)
          * - clear O_NONBLOCK on the file descriptor
          * - create a thread
          *   - call close() in the thread
