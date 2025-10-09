@@ -396,13 +396,17 @@ impl EpollWaker {
             self.waker.clone_from(cx.waker());
             return Poll::Pending;
         }
-        match func(self.events) {
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                self.waker.clone_from(cx.waker());
-                self.events = EpollFlags::empty();
-                Poll::Pending
+        loop {
+            match func(self.events) {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => { /* EINTR: try again */ }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    /* EAGAIN, EWOULDBLOCK: wait for event */
+                    self.waker.clone_from(cx.waker());
+                    self.events = EpollFlags::empty();
+                    break Poll::Pending;
+                }
+                res => break Poll::Ready(res),
             }
-            res => Poll::Ready(res),
         }
     }
 }
