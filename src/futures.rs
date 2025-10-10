@@ -38,7 +38,7 @@ impl<T: AsRawFd> std::ops::DerefMut for AsyncReadFd<T> {
 
 impl<T: AsRawFd + Unpin> futures_io::AsyncRead for AsyncReadFd<T> {
     fn poll_read(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
@@ -89,7 +89,7 @@ impl<T: AsRawFd> std::ops::DerefMut for AsyncWriteFd<T> {
 
 impl<T: AsRawFd + Unpin> futures_io::AsyncWrite for AsyncWriteFd<T> {
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
