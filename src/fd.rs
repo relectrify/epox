@@ -29,9 +29,15 @@ impl<T: AsRawFd> Fd<T> {
          * receive epoll events in edge triggered mode */
         let flags = OFlag::from_bits_retain(fcntl(fd, FcntlArg::F_GETFL)?);
         fcntl(fd, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK))?;
+
+        /* assume we're ready to read and write to the fd - epoll(7) implies that we
+         * won't see these event from an fd registered with EPOLLET until read or
+         * write return EAGAIN */
+        let waker_events = events & (EpollFlags::EPOLLIN | EpollFlags::EPOLLOUT);
+
         let s = Self {
             inner,
-            ew: Box::pin(RefCell::new(EpollWaker::default())),
+            ew: Box::pin(RefCell::new(EpollWaker::new(waker_events))),
         };
         /* all events must be edge triggered because tasks usually register
          * multiple file descriptors but only wait on one at a time */
