@@ -39,7 +39,7 @@ impl<T: AsRawFd> Fd<T> {
         Ok(s)
     }
 
-    pub fn poll_with<Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error>>(
+    pub fn poll_with_mut<Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error>>(
         &mut self,
         cx: &std::task::Context<'_>,
         mut func: F,
@@ -49,8 +49,25 @@ impl<T: AsRawFd> Fd<T> {
             .poll_with(cx, |events| func(&mut self.inner, events))
     }
 
-    pub const fn with<Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error>>(
+    pub const fn with_mut<Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error>>(
         &mut self,
+        func: F,
+    ) -> FdWithMutFuture<'_, T, Output, F> {
+        FdWithMutFuture { fd: self, func }
+    }
+
+    pub fn poll_with<Output, F: FnMut(&T, EpollFlags) -> Result<Output, Error>>(
+        &self,
+        cx: &std::task::Context<'_>,
+        mut func: F,
+    ) -> Poll<Result<Output, std::io::Error>> {
+        self.ew
+            .borrow_mut()
+            .poll_with(cx, |events| func(&self.inner, events))
+    }
+
+    pub const fn with<Output, F: FnMut(&T, EpollFlags) -> Result<Output, Error>>(
+        &self,
         func: F,
     ) -> FdWithFuture<'_, T, Output, F> {
         FdWithFuture { fd: self, func }
@@ -112,10 +129,10 @@ impl<T: AsFd> std::ops::DerefMut for AsFdWrapper<T> {
 }
 
 /*
- * FdWithFuture
+ * FdWithMutFuture
  */
 #[doc(hidden)]
-pub struct FdWithFuture<
+pub struct FdWithMutFuture<
     'a,
     T: AsRawFd,
     Output,
@@ -126,6 +143,26 @@ pub struct FdWithFuture<
 }
 
 impl<T: AsRawFd, Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error> + Unpin> Future
+    for FdWithMutFuture<'_, T, Output, F>
+{
+    type Output = Result<Output, Error>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let Self { fd, func, .. } = self.get_mut();
+        fd.poll_with_mut(cx, func)
+    }
+}
+
+/*
+ * FdWithFuture
+ */
+#[doc(hidden)]
+pub struct FdWithFuture<'a, T: AsRawFd, Output, F: FnMut(&T, EpollFlags) -> Result<Output, Error>> {
+    fd: &'a Fd<T>,
+    func: F,
+}
+
+impl<T: AsRawFd, Output, F: FnMut(&T, EpollFlags) -> Result<Output, Error> + Unpin> Future
     for FdWithFuture<'_, T, Output, F>
 {
     type Output = Result<Output, Error>;
