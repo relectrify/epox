@@ -382,6 +382,13 @@ pub(crate) struct EpollWaker {
 }
 
 impl EpollWaker {
+    pub(crate) fn new(events: EpollFlags) -> Self {
+        Self {
+            waker: Waker::noop().clone(),
+            events,
+            _not_send_not_sync: PhantomData,
+        }
+    }
     /**
      * Handle events on this waker. Caller must return the result of the io
      * (usually read() or write()) operation which was run on the associated
@@ -407,16 +414,6 @@ impl EpollWaker {
                 }
                 res => break Poll::Ready(res),
             }
-        }
-    }
-}
-
-impl Default for EpollWaker {
-    fn default() -> Self {
-        Self {
-            waker: Waker::noop().clone(),
-            events: EpollFlags::empty(),
-            _not_send_not_sync: core::marker::PhantomData,
         }
     }
 }
