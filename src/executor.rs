@@ -436,7 +436,11 @@ pub enum Priority {
  *
  * See [spawn_checked_with_priority].
  */
-pub fn spawn_checked<T: 'static, E: 'static, F: Future<Output = Result<T, E>> + 'static>(
+pub fn spawn_checked<
+    T: 'static,
+    E: std::fmt::Debug + 'static,
+    F: Future<Output = Result<T, E>> + 'static,
+>(
     future: F,
 ) -> task::Handle<Result<T, E>> {
     spawn_checked_with_priority(future, Priority::Normal)
@@ -451,7 +455,7 @@ pub fn spawn_checked<T: 'static, E: 'static, F: Future<Output = Result<T, E>> + 
  */
 pub fn spawn_checked_with_priority<
     T: 'static,
-    E: 'static,
+    E: std::fmt::Debug + 'static,
     F: Future<Output = Result<T, E>> + 'static,
 >(
     future: F,
@@ -459,9 +463,10 @@ pub fn spawn_checked_with_priority<
 ) -> task::Handle<Result<T, E>> {
     spawn_with_priority(
         async move {
-            future
-                .await
-                .inspect_err(|_| unsafe { shutdown_executor_unchecked() })
+            future.await.inspect_err(|e| {
+                crate::log::error!("Task returned error: {e:?}");
+                unsafe { shutdown_executor_unchecked() }
+            })
         },
         priority,
     )
