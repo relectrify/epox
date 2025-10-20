@@ -6,7 +6,7 @@ const TIMEOUT_DURATION: std::time::Duration = std::time::Duration::from_secs(1);
 fn timeout() {
     let handle = epox::spawn_checked(async {
         match epox::time::timeout(TIMEOUT_DURATION, takes_one_minute())?.await {
-            Ok(_) => Ok::<_, Box<dyn std::error::Error>>(false),
+            Ok(_) => Ok(false),
             Err(()) => Ok(true),
         }
     });
@@ -14,7 +14,7 @@ fn timeout() {
     let begin = std::time::Instant::now();
     epox::run().unwrap();
     let took = std::time::Instant::now().duration_since(begin);
-    let handle_timed_out = handle.result().expect("task should have finished").unwrap();
+    let handle_timed_out = handle.result().expect("task should have finished");
     assert!(handle_timed_out);
     // should be within 5% of TIMEOUT_DURATION
     assert!(took.abs_diff(TIMEOUT_DURATION) < (TIMEOUT_DURATION / 20));

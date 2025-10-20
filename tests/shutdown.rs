@@ -56,7 +56,11 @@ fn shutdown_executor_unchecked() {
         timer.tick().await.unwrap();
         println!("timer finished; shutdown now");
 
-        unsafe { epox::executor::shutdown_executor_unchecked() };
+        unsafe {
+            epox::executor::shutdown_executor_unchecked(Err(
+                std::io::Error::other("shutdown").into()
+            ));
+        };
         "return value"
     });
     let will_complete = epox::spawn(async move {
@@ -80,7 +84,7 @@ fn shutdown_executor_unchecked() {
         "return value"
     });
 
-    epox::run().unwrap();
+    assert!(epox::run().is_err());
 
     assert!(will_complete.result().is_some());
     assert!(will_not_complete.result().is_none());
@@ -101,7 +105,7 @@ fn spawn_checked() {
         "return value"
     });
     // will loop 3x before returning an error, and should never return Ok
-    let will_error = epox::spawn_checked::<(), Box<dyn std::error::Error>, _>(async move {
+    epox::spawn_checked::<(), _>(async move {
         let mut num = 0;
         loop {
             let mut timer = epox::Timer::new().unwrap();
@@ -129,9 +133,7 @@ fn spawn_checked() {
         "return value"
     });
 
-    epox::run().unwrap();
-
-    assert!(will_error.result().is_some_and(|r| r.is_err()));
+    assert!(epox::run().is_err());
 
     assert!(will_complete.result().is_some());
     assert!(will_not_complete.result().is_none());

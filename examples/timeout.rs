@@ -9,7 +9,7 @@ fn main() {
             stdin_reader.read_line(&mut line).await?;
             let line = line.trim();
             println!("read line: {line}");
-            Ok::<_, Box<dyn std::error::Error>>(())
+            Ok::<(), std::io::Error>(())
         })?
         .await
         {
@@ -18,9 +18,9 @@ fn main() {
             }
             Err(()) => println!("timed out waiting for line"),
         }
-        Ok::<_, Box<dyn std::error::Error>>(())
+        Ok(())
     });
 
     epox::run().unwrap();
-    handle.result().unwrap().unwrap();
+    handle.result().unwrap();
 }

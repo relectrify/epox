@@ -7,7 +7,7 @@ fn main() {
         let received = rx.recv().await?;
         let took = std::time::Instant::now().duration_since(begin);
         println!("received '{received}' in async task; took {took:?}");
-        Ok::<_, Box<dyn std::error::Error>>(())
+        Ok(())
     });
 
     std::thread::spawn(move || {
@@ -19,8 +19,5 @@ fn main() {
 
     epox::run().unwrap();
 
-    handle
-        .result()
-        .expect("async task didn't complete")
-        .unwrap();
+    handle.result().expect("async task didn't complete");
 }

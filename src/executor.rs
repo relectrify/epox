@@ -2,6 +2,7 @@ use crate::{
     queue::{Queue, QueueEntry, Queueable},
     task,
     task::Task,
+    yield_now,
 };
 use nix::{
     fcntl::OFlag,
@@ -119,7 +120,7 @@ pin_project! {
         pipe_rd: OwnedFd,
         pipe_wr: OwnedFd,
         events: Vec<EpollEvent>,
-        shutdown: bool,
+        shutdown: std::cell::Cell<Option<Result<(), Box<dyn std::error::Error>>>>,
         _not_send_not_sync: PhantomData<*mut ()>,
     }
 }
@@ -136,7 +137,7 @@ impl Executor {
             pipe_rd,
             pipe_wr,
             events: Vec::new(),
-            shutdown: false,
+            shutdown: None.into(),
             _not_send_not_sync: PhantomData,
         });
         let this = s.as_mut().project();
@@ -272,8 +273,8 @@ impl Executor {
             .or_else(|| this.runq_low.pop())
     }
 
-    fn shutdown(self: Pin<&mut Self>) {
-        *self.project().shutdown = true;
+    fn shutdown(self: Pin<&mut Self>, result: Result<(), Box<dyn std::error::Error>>) {
+        *self.project().shutdown = Some(result).into();
     }
 
     fn wake_from_pipe(mut self: Pin<&mut Self>) -> Result<(), Error> {
@@ -436,9 +437,12 @@ pub enum Priority {
  *
  * See [spawn_checked_with_priority].
  */
-pub fn spawn_checked<T: 'static, E: 'static, F: Future<Output = Result<T, E>> + 'static>(
+pub fn spawn_checked<
+    T: 'static,
+    F: Future<Output = Result<T, Box<dyn std::error::Error>>> + 'static,
+>(
     future: F,
-) -> task::Handle<Result<T, E>> {
+) -> task::Handle<T> {
     spawn_checked_with_priority(future, Priority::Normal)
 }
 
@@ -446,22 +450,28 @@ pub fn spawn_checked<T: 'static, E: 'static, F: Future<Output = Result<T, E>> + 
  * Spawn a task on the thread local executor with [`Priority`] priority that
  * will stop the executor if it returns [`Err`].
  *
- * This is a wrapper over [`spawn_with_priority`] that calls
- * [`shutdown_executor_unchecked()`] if the spawned future returns [`Err`].
+ * This is a wrapper over [`spawn_with_priority`] that calls [`shutdown()`]
+ * if the spawned future returns [`Err`].
  */
 pub fn spawn_checked_with_priority<
     T: 'static,
-    E: 'static,
-    F: Future<Output = Result<T, E>> + 'static,
+    F: Future<Output = Result<T, Box<dyn std::error::Error>>> + 'static,
 >(
     future: F,
     priority: Priority,
-) -> task::Handle<Result<T, E>> {
+) -> task::Handle<T> {
     spawn_with_priority(
         async move {
-            future
-                .await
-                .inspect_err(|_| unsafe { shutdown_executor_unchecked() })
+            match future.await {
+                Ok(r) => r,
+                Err(e) => {
+                    unsafe {
+                        shutdown_executor_unchecked(Err(e));
+                    }
+                    yield_now().await;
+                    unreachable!();
+                }
+            }
         },
         priority,
     )
@@ -487,8 +497,8 @@ pub fn spawn_with_priority<F: Future + 'static>(
 /**
  * Run the thread local executor until no futures are pending.
  */
-pub fn run() -> Result<(), std::io::Error> {
-    'outer: loop {
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let result = 'outer: loop {
         while let Some(t) = exec(|e| e.highest_priority_runnable_task()) {
             let pending = {
                 /* poll the task */
@@ -506,8 +516,8 @@ pub fn run() -> Result<(), std::io::Error> {
                 }
             };
 
-            if exec(|e| e.shutdown) {
-                break 'outer;
+            if let Some(result) = exec(|e| e.shutdown.take()) {
+                break 'outer result;
             }
 
             /* if task is still queued it yielded and is in a run queue */
@@ -521,18 +531,18 @@ pub fn run() -> Result<(), std::io::Error> {
         }
         if exec(|e| e.sleepq.is_empty()) {
             /* all tasks have completed */
-            break;
+            break Ok(());
         }
 
         /* wait for events */
         exec(|e| e.epoll_wait(EpollTimeout::NONE))?;
-    }
+    };
 
     // drop the executor, releasing all resources it has used
     // replaces it with a new one so you can call run() again
     let _ = EXECUTOR.replace(Executor::new()?);
 
-    Ok(())
+    result
 }
 
 /**
@@ -553,8 +563,8 @@ pub fn run() -> Result<(), std::io::Error> {
  *
  * [`epox::run()`]: run
  */
-pub unsafe fn shutdown_executor_unchecked() {
-    exec(|e| e.shutdown());
+pub unsafe fn shutdown_executor_unchecked(result: Result<(), Box<dyn std::error::Error>>) {
+    exec(|e| e.shutdown(result));
 }
 
 /**
@@ -583,7 +593,7 @@ impl Future for Shutdown {
     type Output = std::convert::Infallible;
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
-        unsafe { shutdown_executor_unchecked() };
+        unsafe { shutdown_executor_unchecked(Ok(())) };
         Poll::Pending
     }
 }
