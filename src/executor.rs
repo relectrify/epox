@@ -335,7 +335,12 @@ fn build_task_waker(task: &Weak<ExecutorTask>) -> Waker {
                     let p = Weak::into_raw(weak.clone());
                     let bytes = (p as usize).to_ne_bytes();
                     /* safety: fd stays valid for duration of call */
-                    write(unsafe { BorrowedFd::borrow_raw(task.pipe_wr) }, &bytes).unwrap();
+                    match write(unsafe { BorrowedFd::borrow_raw(task.pipe_wr) }, &bytes) {
+                        /* EBADF indicates the pipe has been closed - so the executor associated
+                         * with this waker has stopped */
+                        Ok(_) | Err(nix::errno::Errno::EBADF) => {}
+                        Err(e) => panic!("error writing to task wake pipe: {e:?}"),
+                    }
                 }
             });
         }
