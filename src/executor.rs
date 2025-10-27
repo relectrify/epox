@@ -383,6 +383,11 @@ fn build_task_waker(task: &Weak<ExecutorTask>) -> Waker {
 pub(crate) struct EpollWaker {
     waker: Waker,
     events: EpollFlags,
+    /// Number of times [`poll_with`] has returned `Ready` since it last
+    /// returned `Pending`
+    ///
+    /// [`poll_with`]: Self::poll_with
+    burst: usize,
     _not_send_not_sync: core::marker::PhantomData<*mut ()>,
 }
 
@@ -391,6 +396,7 @@ impl EpollWaker {
         Self {
             waker: Waker::noop().clone(),
             events,
+            burst: 0,
             _not_send_not_sync: PhantomData,
         }
     }
@@ -405,7 +411,23 @@ impl EpollWaker {
         mut func: F,
     ) -> Poll<Result<T, std::io::Error>> {
         if self.events.is_empty() {
+            self.burst = 0;
             self.waker.clone_from(cx.waker());
+            return Poll::Pending;
+        }
+
+        // TODO: make this configurable
+        const BURST_LIMIT: usize = 20;
+
+        // if we've returned Poll::Ready a few times in a row, manually yield to the
+        // executor to give other tasks a turn. without this we could end up never
+        // yielding if the fd is always ready
+        if self.burst >= BURST_LIMIT {
+            self.burst = 0;
+            // the docs say "yielding to competing tasks is not guaranteed", but we know
+            // that we're running in epox which will let other tasks run
+            // https://doc.rust-lang.org/std/task/struct.Waker.html#impl-Waker
+            cx.waker().wake_by_ref();
             return Poll::Pending;
         }
         loop {
@@ -413,11 +435,15 @@ impl EpollWaker {
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => { /* EINTR: try again */ }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     /* EAGAIN, EWOULDBLOCK: wait for event */
+                    self.burst = 0;
                     self.waker.clone_from(cx.waker());
                     self.events = EpollFlags::empty();
                     break Poll::Pending;
                 }
-                res => break Poll::Ready(res),
+                res => {
+                    self.burst += 1;
+                    break Poll::Ready(res);
+                }
             }
         }
     }
