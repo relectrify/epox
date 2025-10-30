@@ -50,9 +50,21 @@ impl<T: AsRawFd> Fd<T> {
         cx: &std::task::Context<'_>,
         mut func: F,
     ) -> Poll<Result<Output, std::io::Error>> {
-        self.ew
+        let ret = self
+            .ew
             .borrow_mut()
-            .poll_with(cx, |events| func(&mut self.inner, events))
+            .poll_with(cx, |events| func(&mut self.inner, events));
+
+        match ret {
+            crate::executor::ControlFlow::Normal(poll) => poll,
+            crate::executor::ControlFlow::Yield => {
+                // the docs say "yielding to competing tasks is not guaranteed", but we
+                // know that we're running in epox which will let other tasks
+                // run https://doc.rust-lang.org/std/task/struct.Waker.html#impl-Waker
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
     }
 
     pub const fn with_mut<Output, F: FnMut(&mut T, EpollFlags) -> Result<Output, Error>>(
@@ -67,9 +79,21 @@ impl<T: AsRawFd> Fd<T> {
         cx: &std::task::Context<'_>,
         mut func: F,
     ) -> Poll<Result<Output, std::io::Error>> {
-        self.ew
+        let ret = self
+            .ew
             .borrow_mut()
-            .poll_with(cx, |events| func(&self.inner, events))
+            .poll_with(cx, |events| func(&self.inner, events));
+
+        match ret {
+            crate::executor::ControlFlow::Normal(poll) => poll,
+            crate::executor::ControlFlow::Yield => {
+                // the docs say "yielding to competing tasks is not guaranteed", but we
+                // know that we're running in epox which will let other tasks
+                // run https://doc.rust-lang.org/std/task/struct.Waker.html#impl-Waker
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
     }
 
     pub const fn with<Output, F: FnMut(&T, EpollFlags) -> Result<Output, Error>>(
