@@ -238,6 +238,11 @@ impl Executor {
             /* safety: e.data() is the result of std::ptr::from_ref(Pin::into_inner) */
             let ew = Pin::new(unsafe { &*(e.data() as *mut RefCell<EpollWaker>) });
             let mut waker = ew.borrow_mut();
+            if waker.events.contains(e.events()) {
+                // epoll might give us an edge even though the fd hasn't yet returned
+                // EWOULDBLOCK/EAGAIN
+                continue;
+            }
             waker.events |= e.events();
             /* waker.waker may be a noop waker - in that case, waker.waker.data() will
              * not be a valid pointer */
