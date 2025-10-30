@@ -391,6 +391,12 @@ pub(crate) struct EpollWaker {
     _not_send_not_sync: core::marker::PhantomData<*mut ()>,
 }
 
+#[must_use]
+pub(crate) enum ControlFlow<T> {
+    Normal(Poll<T>),
+    Yield,
+}
+
 impl EpollWaker {
     pub(crate) fn new(events: EpollFlags) -> Self {
         Self {
@@ -409,11 +415,11 @@ impl EpollWaker {
         &mut self,
         cx: &std::task::Context<'_>,
         mut func: F,
-    ) -> Poll<Result<T, std::io::Error>> {
+    ) -> ControlFlow<Result<T, std::io::Error>> {
         if self.events.is_empty() {
             self.burst = 0;
             self.waker.clone_from(cx.waker());
-            return Poll::Pending;
+            return ControlFlow::Normal(Poll::Pending);
         }
 
         // TODO: make this configurable
@@ -424,11 +430,8 @@ impl EpollWaker {
         // yielding if the fd is always ready
         if self.burst >= BURST_LIMIT {
             self.burst = 0;
-            // the docs say "yielding to competing tasks is not guaranteed", but we know
-            // that we're running in epox which will let other tasks run
-            // https://doc.rust-lang.org/std/task/struct.Waker.html#impl-Waker
-            cx.waker().wake_by_ref();
-            return Poll::Pending;
+
+            return ControlFlow::Yield;
         }
         loop {
             match func(self.events) {
@@ -438,11 +441,11 @@ impl EpollWaker {
                     self.burst = 0;
                     self.waker.clone_from(cx.waker());
                     self.events = EpollFlags::empty();
-                    break Poll::Pending;
+                    break ControlFlow::Normal(Poll::Pending);
                 }
                 res => {
                     self.burst += 1;
-                    break Poll::Ready(res);
+                    break ControlFlow::Normal(Poll::Ready(res));
                 }
             }
         }
