@@ -54,6 +54,9 @@ pub(crate) struct ExecutorTask {
     pub(crate) handle_waker: Cell<Waker>,
     priority: Priority,
     pub(crate) task: Pin<Box<RefCell<Task>>>,
+    /* keep track of whether this task has returned Poll::Ready, so we don't enqueue a task that
+     * has completed */
+    has_completed: Cell<bool>,
     /* this struct must be pinned as queue requires pinned entries */
     _pinned: std::marker::PhantomPinned,
 }
@@ -166,6 +169,7 @@ impl Executor {
             handle_waker: Cell::new(Waker::noop().clone()),
             priority,
             task: Task::new_pinned_boxed_refcell(future),
+            has_completed: Cell::new(false),
             _pinned: std::marker::PhantomPinned,
         });
         /* safety: Arc is missing a way to build a pinned cyclic */
@@ -261,7 +265,9 @@ impl Executor {
     }
 
     fn enqueue(self: Pin<&mut Self>, task: TaskRef) {
-        self.runq(task.priority).push(task);
+        if !task.has_completed.get() {
+            self.runq(task.priority).push(task);
+        }
     }
 
     fn sleep(self: Pin<&mut Self>, task: TaskRef) {
@@ -540,6 +546,7 @@ pub fn run() -> Result<(), std::io::Error> {
                     Poll::Ready(()) => {
                         /* wakeup handle potentially waiting on this task */
                         t.handle_waker.replace(Waker::noop().clone()).wake_by_ref();
+                        t.has_completed.replace(true);
                         false
                     }
                 }
