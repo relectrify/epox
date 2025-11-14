@@ -33,6 +33,7 @@ jobs:
             cargo fmt --check
             taplo fmt --check
           done
+          git checkout --force ${{ github.head_ref }}
       - name: check for unused dependencies
         run: cargo machete
       - name: run clippy
