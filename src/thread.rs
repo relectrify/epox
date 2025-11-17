@@ -38,17 +38,27 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    let waker = Arc::new(Mutex::new(Waker::noop().clone()));
+    let state = Arc::new(Mutex::new(State::Running(Waker::noop().clone())));
 
-    let thread_waker = waker.clone();
-    let join_handle = builder.spawn(move || {
-        let val = f();
-        thread_waker.lock().unwrap().wake_by_ref();
-        val
+    let join_handle = builder.spawn({
+        let state = state.clone();
+        move || {
+            let val = f();
+
+            // update state before waking task
+            let State::Running(waker) =
+                std::mem::replace(&mut *state.lock().unwrap(), State::Complete)
+            else {
+                // this is the only place we change state from running
+                panic!("thread finished but state was already Complete");
+            };
+            waker.wake();
+            val
+        }
     })?;
 
     Ok(Handle {
-        waker,
+        state,
         join_handle: Some(join_handle),
     })
 }
@@ -65,8 +75,13 @@ where
 /// [`JoinHandle`]: std::thread::JoinHandle
 /// [`join()`]: Self::join
 pub struct Handle<T> {
-    waker: Arc<Mutex<Waker>>,
+    state: Arc<Mutex<State>>,
     join_handle: Option<std::thread::JoinHandle<T>>,
+}
+
+enum State {
+    Running(Waker),
+    Complete,
 }
 
 impl<T> Handle<T> {
@@ -103,17 +118,20 @@ impl<T> Future for JoinFuture<T> {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Self::Output> {
-        self.handle.waker.lock().unwrap().clone_from(cx.waker());
-        if self.handle.is_finished() {
-            Poll::Ready(
-                self.handle
+        let handle = &mut self.handle;
+
+        match &mut *handle.state.lock().unwrap() {
+            State::Running(waker) => {
+                waker.clone_from(cx.waker());
+                Poll::Pending
+            }
+            State::Complete => Poll::Ready(
+                handle
                     .join_handle
                     .take()
                     .expect("future polled after completion")
                     .join(),
-            )
-        } else {
-            Poll::Pending
+            ),
         }
     }
 }
