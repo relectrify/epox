@@ -5,6 +5,9 @@ edition = "2024"
 rust-version = "1.87.0"
 license = "MIT"
 description = "An epoll driven async executor."
+repository = "https://github.com/relectrify/epox"
+categories = ["asynchronous"]
+keywords = ["async", "epoll", "linux"]
 
 [features]
 default = []
