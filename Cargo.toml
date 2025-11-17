@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.87.0"
 license = "MIT"
+description = "An epoll driven async executor."
 
 [features]
 default = []
