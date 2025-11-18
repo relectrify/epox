@@ -586,6 +586,47 @@ pub fn run() -> Result<(), std::io::Error> {
 }
 
 /**
+ * Runs a future to completion while allowing other tasks to run.
+ *
+ * This functions as a "blocking `.await`" - other tasks will be able to run
+ * until this future returns [`Poll::Ready`].
+ *
+ * May be useful when implementing traits (an async [`Drop`] implementation)
+ * or to run a single future in a blocking context.
+ *
+ * ```
+ * fn blocking_function() {
+ *     # use std::time::Duration;
+ *     let result = epox::executor::block_on(
+ *         Box::pin(async { epox::time::sleep(Duration::from_millis(100)).await }).as_mut(),
+ *     );
+ *     result.unwrap();
+ * }
+ * ```
+ */
+#[allow(
+    clippy::must_use_candidate,
+    reason = "we want to inherit the must_use of F::Output"
+)]
+pub fn block_on<F: Future>(mut future: Pin<&mut F>) -> F::Output {
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    loop {
+        if let Poll::Ready(v) = future.as_mut().poll(&mut cx) {
+            return v;
+        }
+
+        if let Some(runnable_task) = exec(|e| e.highest_priority_runnable_task()) {
+            run_task(runnable_task);
+            /* check for events which happened while task was running */
+            exec(|e| e.epoll_wait(EpollTimeout::ZERO)).unwrap();
+        } else {
+            /* if there's no task to run, wait for an event */
+            exec(|e| e.epoll_wait(EpollTimeout::NONE)).unwrap();
+        }
+    }
+}
+
+/**
  * Removes all pending tasks from the executor and returns control to the
  * caller.
  *
