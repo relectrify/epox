@@ -529,47 +529,51 @@ pub fn spawn_with_priority<F: Future + 'static>(
     exec(|e| e.spawn(future, priority))
 }
 
+fn run_task(t: TaskRef) {
+    let pending = {
+        /* poll the task */
+        let mut cx = Context::from_waker(&t.waker);
+        let mut ti = t.task.borrow_mut();
+        /* safety: t is pinned therefore its deref is also pinned */
+        let ti = unsafe { Pin::new_unchecked(&mut *ti) };
+        match ti.poll(&mut cx) {
+            Poll::Pending => true,
+            Poll::Ready(()) => {
+                /* wakeup handle potentially waiting on this task */
+                t.handle_waker.replace(Waker::noop().clone()).wake_by_ref();
+                t.has_completed.replace(true);
+                false
+            }
+        }
+    };
+
+    /* if task is still queued it yielded and is in a run queue */
+    if pending && !t.is_queued() {
+        /* task pending and not runnable: put it on the sleep queue */
+        exec(|e| e.sleep(t));
+    }
+}
+
 /**
  * Run the thread local executor until no futures are pending.
  */
 pub fn run() -> Result<(), std::io::Error> {
     'outer: loop {
-        while let Some(t) = exec(|e| e.highest_priority_runnable_task()) {
-            let pending = {
-                /* poll the task */
-                let mut cx = Context::from_waker(&t.waker);
-                let mut ti = t.task.borrow_mut();
-                /* safety: t is pinned therefore its deref is also pinned */
-                let ti = unsafe { Pin::new_unchecked(&mut *ti) };
-                match ti.poll(&mut cx) {
-                    Poll::Pending => true,
-                    Poll::Ready(()) => {
-                        /* wakeup handle potentially waiting on this task */
-                        t.handle_waker.replace(Waker::noop().clone()).wake_by_ref();
-                        t.has_completed.replace(true);
-                        false
-                    }
-                }
-            };
+        while let Some(runnable_task) = exec(|e| e.highest_priority_runnable_task()) {
+            run_task(runnable_task);
 
             if exec(|e| e.shutdown) {
                 break 'outer;
             }
 
-            /* if task is still queued it yielded and is in a run queue */
-            if pending && !t.is_queued() {
-                /* task pending and not runnable: put it on the sleep queue */
-                exec(|e| e.sleep(t));
-            }
-
             /* check for events which happened while task was running */
             exec(|e| e.epoll_wait(EpollTimeout::ZERO))?;
         }
+
         if exec(|e| e.sleepq.is_empty()) {
             /* all tasks have completed */
             break;
         }
-
         /* wait for events */
         exec(|e| e.epoll_wait(EpollTimeout::NONE))?;
     }
