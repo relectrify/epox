@@ -153,3 +153,61 @@ fn wake_completed_task() {
             .is_ready()
     );
 }
+
+#[test]
+fn block_on() {
+    const DROP_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+
+    struct HasAsyncDrop;
+
+    impl Drop for HasAsyncDrop {
+        fn drop(&mut self) {
+            epox::executor::block_on(
+                Box::pin(async {
+                    epox::time::sleep(DROP_DELAY).await.unwrap();
+                })
+                .as_mut(),
+            );
+        }
+    }
+
+    epox::spawn(async {
+        let mut timer = epox::Timer::new().unwrap();
+        timer
+            .set(nix::sys::timer::Expiration::Interval(
+                std::time::Duration::from_millis(10).into(),
+            ))
+            .unwrap();
+        loop {
+            // we should see every tick of this timer - even when the HasAsyncDrop is
+            // "blocking" for 200ms in its Drop implementation
+            assert_eq!(timer.tick().await.unwrap(), 1);
+        }
+    });
+
+    epox::spawn(async {
+        // make sure other task has started
+        epox::time::sleep(std::time::Duration::from_millis(100))
+            .await
+            .unwrap();
+
+        let time_before = std::time::Instant::now();
+
+        let val = HasAsyncDrop;
+        drop(val);
+
+        // make sure drop actually took 200ms
+        let elapsed = time_before.elapsed();
+        assert!(elapsed.abs_diff(DROP_DELAY) < (DROP_DELAY / 100));
+
+        // if the block_on in Drop wasn't letting other tasks run, we'll have to await
+        // something here to let the other task run and fail
+        epox::time::sleep(std::time::Duration::from_millis(100))
+            .await
+            .unwrap();
+
+        epox::shutdown().await
+    });
+
+    epox::run().unwrap();
+}
