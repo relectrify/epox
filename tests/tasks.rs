@@ -162,7 +162,7 @@ fn block_on() {
 
     impl Drop for HasAsyncDrop {
         fn drop(&mut self) {
-            epox::executor::block_on(
+            epox::block_on(
                 Box::pin(async {
                     epox::time::sleep(DROP_DELAY).await.unwrap();
                 })
