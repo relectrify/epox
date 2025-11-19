@@ -608,8 +608,9 @@ pub fn run() -> Result<(), std::io::Error> {
     clippy::must_use_candidate,
     reason = "we want to inherit the must_use of F::Output"
 )]
-pub fn block_on<F: Future>(mut future: Pin<&mut F>) -> F::Output {
+pub fn block_on<F: Future>(future: F) -> F::Output {
     let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let mut future = std::pin::pin!(future);
     loop {
         if let Poll::Ready(v) = future.as_mut().poll(&mut cx) {
             return v;
