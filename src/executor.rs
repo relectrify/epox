@@ -408,6 +408,19 @@ pub(crate) enum ControlFlow<T> {
     Yield,
 }
 
+thread_local! {
+    static BURST_LIMIT: Cell<usize> = const { Cell::new(20) };
+}
+
+pub fn set_burst_limit(limit: usize) {
+    BURST_LIMIT.set(limit);
+}
+
+#[must_use]
+pub fn get_burst_limit() -> usize {
+    BURST_LIMIT.get()
+}
+
 impl EpollWaker {
     pub(crate) fn new(events: EpollFlags) -> Self {
         Self {
@@ -433,13 +446,10 @@ impl EpollWaker {
             return ControlFlow::Normal(Poll::Pending);
         }
 
-        // TODO: make this configurable
-        const BURST_LIMIT: usize = 20;
-
         // if we've returned Poll::Ready a few times in a row, manually yield to the
         // executor to give other tasks a turn. without this we could end up never
         // yielding if the fd is always ready
-        if self.burst >= BURST_LIMIT {
+        if self.burst >= BURST_LIMIT.get() {
             self.burst = 0;
 
             return ControlFlow::Yield;
