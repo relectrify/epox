@@ -62,13 +62,31 @@ impl<T: AsRawFd + Unpin> futures_io::AsyncRead for AsyncReadFd<T> {
 pub struct AsyncWriteFd<T: AsRawFd> {
     inner: Fd<T>,
     flush_handle: Option<crate::thread::JoinFuture<std::io::Result<()>>>,
+    flush_style: Option<FlushStyle>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum FlushStyle {
+    Tcdrain,
+    Fsync,
 }
 
 impl<T: AsRawFd> AsyncWriteFd<T> {
     pub fn new(inner: T) -> Result<Self, std::io::Error> {
+        let fd = unsafe { BorrowedFd::borrow_raw(inner.as_raw_fd()) };
+        let stat = nix::sys::stat::fstat(fd)?;
+        let mode = stat.st_mode & nix::libc::S_IFMT;
+
+        let flush_style = match mode {
+            nix::libc::S_IFREG | nix::libc::S_IFBLK | nix::libc::S_IFDIR => Some(FlushStyle::Fsync),
+            nix::libc::S_IFCHR if nix::unistd::isatty(fd)? => Some(FlushStyle::Tcdrain),
+            _ => None,
+        };
+
         Ok(Self {
             inner: Fd::new(inner, EpollFlags::EPOLLOUT | EpollFlags::EPOLLET)?,
             flush_handle: None,
+            flush_style,
         })
     }
 }
@@ -106,20 +124,19 @@ impl<T: AsRawFd + Unpin> futures_io::AsyncWrite for AsyncWriteFd<T> {
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<std::io::Result<()>> {
+        let Some(flush_style) = self.flush_style else {
+            return Poll::Ready(Ok(()));
+        };
+
         let borrowed_fd = unsafe { BorrowedFd::borrow_raw(self.inner.inner().as_raw_fd()) };
 
         let flush_handle = self.flush_handle.get_or_insert_with(|| {
             let fd = borrowed_fd.try_clone_to_owned();
-            crate::thread::spawn(|| {
+            crate::thread::spawn(move || {
                 let fd = fd?;
-                match nix::unistd::isatty(&fd) {
-                    Ok(true) => {
-                        nix::sys::termios::tcdrain(fd)?;
-                    }
-                    Ok(false) => {
-                        nix::unistd::fsync(fd)?;
-                    }
-                    Err(e) => return Err(e.into()),
+                match flush_style {
+                    FlushStyle::Tcdrain => nix::sys::termios::tcdrain(fd)?,
+                    FlushStyle::Fsync => nix::unistd::fsync(fd)?,
                 }
                 Ok(())
             })
