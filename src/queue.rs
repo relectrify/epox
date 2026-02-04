@@ -111,8 +111,8 @@ impl<T: Queueable> Drop for Queue<T> {
 
 #[derive(Debug)]
 pub(crate) struct QueueEntry {
-    prev: *mut QueueEntry,
-    next: *mut QueueEntry,
+    prev: *mut Self,
+    next: *mut Self,
     _pinned: PhantomPinned,
 }
 
