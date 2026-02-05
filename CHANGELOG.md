@@ -1,3 +1,8 @@
+0.2.1
+=====
+
+- Teach AsyncWriteFd::poll_flush to support more fd types (e.g. sockets).
+
 0.2.0
 =====
 
