@@ -296,7 +296,12 @@ impl Executor {
             )
         })?;
         /* safety: if read() does not return an error, buf is initialised */
-        let weak = weak_from_raw(unsafe { buf.assume_init() });
+        let p = unsafe { buf.assume_init() };
+        if p.is_null() {
+            /* the future in block_on needs to be polled */
+            return Ok(());
+        }
+        let weak = weak_from_raw(p);
         /* wake up task */
         if let Some(task) = weak.upgrade() {
             /* safety: task is an Arc whose contents do not move */
@@ -621,7 +626,39 @@ pub fn run() -> Result<(), std::io::Error> {
     reason = "we want to inherit the must_use of F::Output"
 )]
 pub fn block_on<F: Future>(future: F) -> F::Output {
-    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    let block_on_waker = {
+        fn wake(p: *const ()) {
+            let waker_pipe_wr = p as i32;
+            exec(|e| {
+                if waker_pipe_wr == e.pipe_wr.as_raw_fd() {
+                    /* waking from the same thread as block_on, no need for
+                     * an additional event */
+                    return;
+                }
+                /* write a null pointer into the pipe so that epoll_wait will
+                 * return, and the future can be polled again */
+                let bytes = 0usize.to_ne_bytes();
+                /* safety: fd stays valid for duration of call */
+                match write(unsafe { BorrowedFd::borrow_raw(waker_pipe_wr) }, &bytes) {
+                    /* EBADF indicates the pipe has been closed - so the executor associated
+                     * with this waker has stopped */
+                    Ok(_) | Err(nix::errno::Errno::EBADF) => {}
+                    Err(e) => panic!("error writing to task wake pipe: {e:?}"),
+                }
+            });
+        }
+        const VTABLE: RawWakerVTable = RawWakerVTable::new(
+            |p| RawWaker::new(p, &VTABLE),
+            |p| wake(p),
+            |p| wake(p),
+            |_| {},
+        );
+        /* put this executor's pipe into the waker data */
+        RawWaker::new(exec(|e| e.pipe_wr.as_raw_fd()) as *const _, &VTABLE)
+    };
+
+    let waker = unsafe { std::task::Waker::from_raw(block_on_waker) };
+    let mut cx = std::task::Context::from_waker(&waker);
     let mut future = std::pin::pin!(future);
     loop {
         if let Poll::Ready(v) = future.as_mut().poll(&mut cx) {
