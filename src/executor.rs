@@ -248,9 +248,8 @@ impl Executor {
                 continue;
             }
             waker.events |= e.events();
-            /* waker.waker may be a noop waker - in that case, waker.waker.data() will
-             * not be a valid pointer */
-            if !waker.waker.data().is_null() {
+            /* if the waker is a task waker, we know that data is a task */
+            if *waker.waker.vtable() == task_waker::VTABLE {
                 /* don't call waker.waker.wake_by_ref() as the executor is already borrowed! */
                 let weak = weak_from_raw(waker.waker.data());
                 if let Some(task) = weak.upgrade() {
