@@ -165,7 +165,7 @@ impl Executor {
         let task = Arc::new_cyclic(|me| ExecutorTask {
             queue_entry: UnsafeCell::new(QueueEntry::new()),
             pipe_wr: self.pipe_wr.as_raw_fd(),
-            waker: build_task_waker(me),
+            waker: task_waker::build(me),
             handle_waker: Cell::new(Waker::noop().clone()),
             priority,
             task: Task::new_pinned_boxed_refcell(future),
@@ -316,8 +316,23 @@ fn weak_from_raw(p: *const ()) -> Weak<ExecutorTask> {
 /*
  * Build a waker for a task.
  */
-fn build_task_waker(task: &Weak<ExecutorTask>) -> Waker {
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake_by_val, wake_by_ref, drop);
+mod task_waker {
+    use super::{ExecutorTask, Weak, exec, weak_from_raw};
+    use nix::sys::epoll::EpollTimeout;
+    use nix::unistd::write;
+    use std::{
+        os::fd::{AsRawFd, BorrowedFd},
+        pin::Pin,
+        sync::Arc,
+        task::{RawWaker, RawWakerVTable, Waker},
+    };
+
+    pub(super) fn build(task: &Weak<ExecutorTask>) -> Waker {
+        unsafe { Waker::from_raw(RawWaker::new(Weak::into_raw(task.clone()).cast(), &VTABLE)) }
+    }
+
+    pub(super) const VTABLE: RawWakerVTable =
+        RawWakerVTable::new(clone, wake_by_val, wake_by_ref, drop);
 
     fn wake(weak: &Weak<ExecutorTask>) {
         if let Some(task) = weak.upgrade() {
@@ -383,8 +398,6 @@ fn build_task_waker(task: &Weak<ExecutorTask>) -> Waker {
     unsafe fn drop(p: *const ()) {
         weak_from_raw(p);
     }
-
-    unsafe { Waker::from_raw(RawWaker::new(Weak::into_raw(task.clone()).cast(), &VTABLE)) }
 }
 
 /**
