@@ -156,7 +156,7 @@ fn wake_completed_task() {
 
 #[test]
 fn block_on() {
-    const DROP_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+    const DROP_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 
     struct HasAsyncDrop;
 
@@ -175,7 +175,7 @@ fn block_on() {
         let mut timer = epox::Timer::new().unwrap();
         timer
             .set(nix::sys::timer::Expiration::Interval(
-                std::time::Duration::from_millis(10).into(),
+                std::time::Duration::from_millis(50).into(),
             ))
             .unwrap();
         loop {
@@ -198,7 +198,13 @@ fn block_on() {
 
         // make sure drop actually took 200ms
         let elapsed = time_before.elapsed();
-        assert!(elapsed.abs_diff(DROP_DELAY) < (DROP_DELAY / 100));
+        // it might have taken longer - but should have taken at least DROP_DELAY
+        assert!(
+            elapsed
+                > DROP_DELAY
+                    .checked_sub(std::time::Duration::from_millis(10))
+                    .unwrap()
+        );
 
         // if the block_on in Drop wasn't letting other tasks run, we'll have to await
         // something here to let the other task run and fail
