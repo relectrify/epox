@@ -1,3 +1,8 @@
+0.2.2
+=====
+
+- Fix `epox::block_on()` hang if the future uses `epox::thread::spawn()`
+
 0.2.1
 =====
 
