@@ -1,7 +1,8 @@
 use crate::{EpollFlags, Fd};
 pub use nix::sys::signal::{SigSet, Signal};
 use nix::sys::{
-    signal::{SigmaskHow, sigprocmask},
+    signal::SigmaskHow,
+    signal::pthread_sigmask,
     signalfd::{SfdFlags, SignalFd},
 };
 use std::{io::Error, os::fd::AsFd};
@@ -27,7 +28,7 @@ impl AsyncSignal {
 
         /* make sure signals we're trying to receive are not blocked */
         let mut oldset = SigSet::empty();
-        nix::sys::signal::sigprocmask(SigmaskHow::SIG_SETMASK, None, Some(&mut oldset))?;
+        pthread_sigmask(SigmaskHow::SIG_SETMASK, None, Some(&mut oldset))?;
         for s in &sigset {
             if oldset.contains(s) {
                 return Err(Error::other("signal is blocked"));
@@ -38,7 +39,7 @@ impl AsyncSignal {
 
         /* signals received by signalfd need to be blocked to prevent them
          * from being handled according to their default dispositions */
-        nix::sys::signal::sigprocmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None)?;
+        pthread_sigmask(SigmaskHow::SIG_BLOCK, Some(&sigset), None)?;
 
         Ok(Self {
             fd: Fd::new(signalfd, EpollFlags::EPOLLIN)?,
@@ -67,6 +68,6 @@ impl AsyncSignal {
 impl Drop for AsyncSignal {
     fn drop(&mut self) {
         /* unblock signals as they will no longer be received by signalfd */
-        let _ = sigprocmask(SigmaskHow::SIG_UNBLOCK, Some(&self.sigset), None);
+        let _ = pthread_sigmask(SigmaskHow::SIG_UNBLOCK, Some(&self.sigset), None);
     }
 }
