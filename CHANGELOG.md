@@ -1,3 +1,8 @@
+0.2.3
+=====
+
+- Fix `AsyncSignal` to use `pthread_sigmask` instead of `sigprocmask`.
+
 0.2.2
 =====
 
