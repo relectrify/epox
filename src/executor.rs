@@ -57,6 +57,8 @@ pub(crate) struct ExecutorTask {
      * has completed */
     has_completed: Cell<bool>,
     name: std::borrow::Cow<'static, str>,
+    #[cfg(feature = "tracing")]
+    tracing_span: Option<tracing::Id>,
     /* this struct must be pinned as queue requires pinned entries */
     _pinned: std::marker::PhantomPinned,
 }
@@ -167,16 +169,23 @@ impl Executor {
         priority: Priority,
         metadata: task::Metadata,
     ) -> crate::task::Handle<F::Output> {
-        let task = Arc::new_cyclic(|me| ExecutorTask {
-            queue_entry: UnsafeCell::new(QueueEntry::new()),
-            pipe_wr: self.pipe_wr.as_raw_fd(),
-            waker: task_waker::build(me),
-            handle_waker: Cell::new(Waker::noop().clone()),
-            priority,
-            task: Task::new_pinned_boxed_refcell(future),
-            has_completed: Cell::new(false),
-            name: metadata.name,
-            _pinned: std::marker::PhantomPinned,
+        let task = Arc::new_cyclic(|me: &Weak<ExecutorTask>| {
+            #[cfg(feature = "tracing")]
+            let (tracing_span, future) =
+                task::instrument_future(future, &metadata, me.as_ptr().addr());
+            ExecutorTask {
+                queue_entry: UnsafeCell::new(QueueEntry::new()),
+                pipe_wr: self.pipe_wr.as_raw_fd(),
+                waker: task_waker::build(me),
+                handle_waker: Cell::new(Waker::noop().clone()),
+                priority,
+                task: Task::new_pinned_boxed_refcell(future),
+                has_completed: Cell::new(false),
+                name: metadata.name,
+                #[cfg(feature = "tracing")]
+                tracing_span,
+                _pinned: std::marker::PhantomPinned,
+            }
         });
         /* safety: Arc is missing a way to build a pinned cyclic */
         let task = unsafe { Pin::new_unchecked(task) };
@@ -385,6 +394,14 @@ mod task_waker {
     unsafe fn clone(p: *const ()) -> RawWaker {
         let weak = weak_from_raw(p);
         let clone = if let Some(task) = weak.upgrade() {
+            #[cfg(feature = "tracing")]
+            if let Some(task_span) = &task.tracing_span {
+                tracing::trace!(
+                    target: "runtime::waker",
+                    op = "waker.clone",
+                    task.id = task_span.into_u64()
+                );
+            }
             /* task still running */
             RawWaker::new(Weak::into_raw(Arc::downgrade(&task)).cast(), &VTABLE)
         } else {
@@ -396,17 +413,50 @@ mod task_waker {
     }
 
     unsafe fn wake_by_val(p: *const ()) {
-        wake(&weak_from_raw(p));
+        let weak = weak_from_raw(p);
+        #[cfg(feature = "tracing")]
+        if let Some(task) = weak.upgrade() {
+            if let Some(task_span) = &task.tracing_span {
+                tracing::trace!(
+                    target: "runtime::waker",
+                    op = "waker.wake_by_val",
+                    task.id = task_span.into_u64()
+                );
+            }
+        }
+        wake(&weak);
     }
 
     unsafe fn wake_by_ref(p: *const ()) {
         let weak = weak_from_raw(p);
+        #[cfg(feature = "tracing")]
+        if let Some(task) = weak.upgrade() {
+            if let Some(task_span) = &task.tracing_span {
+                tracing::trace!(
+                    target: "runtime::waker",
+                    op = "waker.wake_by_ref",
+                    task.id = task_span.into_u64()
+                );
+            }
+        }
         wake(&weak);
         let _ = Weak::into_raw(weak);
     }
 
     unsafe fn drop(p: *const ()) {
-        weak_from_raw(p);
+        let weak = weak_from_raw(p);
+        #[cfg(feature = "tracing")]
+        if let Some(task) = weak.upgrade() {
+            if let Some(task_span) = &task.tracing_span {
+                tracing::trace!(
+                    target: "runtime::waker",
+                    op = "waker.drop",
+                    task.id = task_span.into_u64()
+                );
+            }
+        }
+        #[cfg(not(feature = "tracing"))]
+        let _ = weak;
     }
 }
 
@@ -670,7 +720,38 @@ pub fn run() -> Result<(), std::io::Error> {
     clippy::must_use_candidate,
     reason = "we want to inherit the must_use of F::Output"
 )]
+#[track_caller]
 pub fn block_on<F: Future>(future: F) -> F::Output {
+    #[cfg(feature = "tracing")]
+    let future = {
+        use tracing::Instrument;
+
+        let location = std::panic::Location::caller();
+
+        let id = {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::hash::DefaultHasher::new();
+            location.hash(&mut hasher);
+            hasher.finish()
+        };
+
+        let span = tracing::trace_span!(
+            target: "epox::task",
+            parent: None,
+            "runtime.spawn",
+            kind = "blocking",
+            task.id = id,
+            loc.file = location.file(),
+            loc.line = location.line(),
+            loc.col = location.column(),
+        );
+
+        future.instrument(span)
+    };
+
+    // TODO: TRACING: instrument waker. we'll need to allocate a data structure
+    // somewhere containing both waker_pipe_wr and the span Id.
+
     let block_on_waker = {
         fn wake(p: *const ()) {
             let waker_pipe_wr = p as i32;
