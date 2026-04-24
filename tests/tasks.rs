@@ -72,7 +72,7 @@ fn abort_task() {
         let mut timer = epox::Timer::new().unwrap();
         timer
             .set(epox::timer::Expiration::OneShot(
-                core::time::Duration::from_millis(1000).into(),
+                core::time::Duration::from_secs(1).into(),
             ))
             .unwrap();
         timer.tick().await.unwrap();
