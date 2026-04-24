@@ -12,12 +12,17 @@ keywords = ["async", "epoll", "linux"]
 [features]
 default = []
 nightly = []
+# enable tracing spans and events for tasks and wakers. compatible with tokio console
+tracing = ["dep:tracing"]
 
 [dependencies]
 futures-io = "0.3"
 futures-util = { version = "0.3", default-features = false }
 nix = { version = "0.31", features = ["event", "fs", "signal", "term", "time"] }
 pin-project-lite = "0.2"
+tracing = { version = "0.1", default-features = false, features = [
+	"std",
+], optional = true }
 
 [build-dependencies]
 rustc_version = "0.4"

@@ -214,9 +214,36 @@ impl<F: Future + 'static> Builder<F> {
     }
 }
 
+#[cfg_attr(
+    not(feature = "tracing"),
+    expect(dead_code, reason = "only used by instrument_future")
+)]
 pub(crate) struct Metadata {
     pub(crate) spawn_location: &'static std::panic::Location<'static>,
     pub(crate) priority: crate::Priority,
     pub(crate) spawn_checked: bool,
     pub(crate) name: std::borrow::Cow<'static, str>,
+}
+
+#[cfg(feature = "tracing")]
+pub(crate) fn instrument_future<F>(
+    task: F,
+    metadata: &crate::task::Metadata,
+    waker_addr: usize,
+) -> (Option<tracing::Id>, tracing::instrument::Instrumented<F>) {
+    use tracing::Instrument;
+    let span = tracing::trace_span!(
+        target: "epox::task",
+        parent: None,
+        "runtime.spawn",
+        kind = "task",
+        task.name = %metadata.name.as_ref(),
+        task.id = waker_addr,
+        task.priority = ?metadata.priority,
+        task.spawn_checked = metadata.spawn_checked,
+        loc.file = metadata.spawn_location.file(),
+        loc.line = metadata.spawn_location.line(),
+        loc.col = metadata.spawn_location.column(),
+    );
+    (span.id(), task.instrument(span))
 }
