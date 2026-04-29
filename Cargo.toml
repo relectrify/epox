@@ -16,7 +16,7 @@ nightly = []
 [dependencies]
 futures-io = "0.3"
 futures-util = { version = "0.3", default-features = false }
-nix = { version = "0.30", features = ["event", "fs", "signal", "term", "time"] }
+nix = { version = "0.31", features = ["event", "fs", "signal", "term", "time"] }
 pin-project-lite = "0.2"
 
 [build-dependencies]
