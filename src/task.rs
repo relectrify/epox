@@ -1,4 +1,7 @@
-use crate::executor::{TaskRef, exec};
+use crate::{
+    Priority,
+    executor::{TaskRef, exec},
+};
 use pin_project_lite::pin_project;
 use std::{
     any::Any,
@@ -114,6 +117,11 @@ impl<T: 'static> Handle<T> {
     pub fn abort(&self) {
         exec(|e| e.abort(self.taskref.clone()));
     }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        self.taskref.name()
+    }
 }
 
 impl<T: 'static> Future for Handle<T> {
@@ -167,4 +175,42 @@ impl Future for YieldFuture {
  */
 pub async fn yield_now() {
     YieldFuture::new().await;
+}
+
+#[must_use = "task must be spawned with .spawn() or .spawn_checked()"]
+pub struct TaskBuilder<F: Future + 'static> {
+    pub(crate) future: F,
+    pub(crate) priority: Priority,
+    pub(crate) spawned_at: &'static std::panic::Location<'static>,
+    pub(crate) name: Option<std::borrow::Cow<'static, str>>,
+}
+
+impl<F: Future + 'static> TaskBuilder<F> {
+    #[track_caller]
+    pub const fn new(future: F) -> Self {
+        let spawned_at = std::panic::Location::caller();
+        Self {
+            future,
+            priority: Priority::Normal,
+            spawned_at,
+            name: None,
+        }
+    }
+
+    pub const fn priority(mut self, priority: Priority) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    pub fn name(mut self, name: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+}
+
+pub(crate) struct TaskMetadata {
+    pub(crate) spawned_at: &'static std::panic::Location<'static>,
+    pub(crate) priority: crate::Priority,
+    pub(crate) spawn_checked: bool,
+    pub(crate) name: std::borrow::Cow<'static, str>,
 }

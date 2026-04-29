@@ -15,7 +15,7 @@ pub use executor::{
 pub use fd::Fd;
 pub use nix::sys::epoll::EpollFlags;
 pub use signal::AsyncSignal;
-pub use task::yield_now;
+pub use task::{TaskBuilder, yield_now};
 pub use timer::Timer;
 
 /** Compatibility with futures-rs. */
