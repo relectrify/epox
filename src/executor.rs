@@ -1,7 +1,6 @@
 use crate::{
     queue::{Queue, QueueEntry, Queueable},
-    task,
-    task::Task,
+    task::{self, Builder, Task},
 };
 use nix::{
     fcntl::OFlag,
@@ -57,6 +56,7 @@ pub(crate) struct ExecutorTask {
     /* keep track of whether this task has returned Poll::Ready, so we don't enqueue a task that
      * has completed */
     has_completed: Cell<bool>,
+    name: std::borrow::Cow<'static, str>,
     /* this struct must be pinned as queue requires pinned entries */
     _pinned: std::marker::PhantomPinned,
 }
@@ -93,6 +93,10 @@ impl Queueable for ExecutorTask {
 impl ExecutorTask {
     fn is_queued(self: &Pin<Arc<Self>>) -> bool {
         self.with_entry(|e| e.is_queued())
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -161,6 +165,7 @@ impl Executor {
         self: Pin<&mut Self>,
         future: F,
         priority: Priority,
+        metadata: task::Metadata,
     ) -> crate::task::Handle<F::Output> {
         let task = Arc::new_cyclic(|me| ExecutorTask {
             queue_entry: UnsafeCell::new(QueueEntry::new()),
@@ -170,6 +175,7 @@ impl Executor {
             priority,
             task: Task::new_pinned_boxed_refcell(future),
             has_completed: Cell::new(false),
+            name: metadata.name,
             _pinned: std::marker::PhantomPinned,
         });
         /* safety: Arc is missing a way to build a pinned cyclic */
@@ -498,10 +504,11 @@ pub enum Priority {
  *
  * See [spawn_checked_with_priority].
  */
+#[track_caller]
 pub fn spawn_checked<T: 'static, E: 'static, F: Future<Output = Result<T, E>> + 'static>(
     future: F,
 ) -> task::Handle<Result<T, E>> {
-    spawn_checked_with_priority(future, Priority::Normal)
+    Builder::new(future).spawn_checked()
 }
 
 /**
@@ -511,6 +518,7 @@ pub fn spawn_checked<T: 'static, E: 'static, F: Future<Output = Result<T, E>> + 
  * This is a wrapper over [`spawn_with_priority`] that calls
  * [`shutdown_executor_unchecked()`] if the spawned future returns [`Err`].
  */
+#[track_caller]
 pub fn spawn_checked_with_priority<
     T: 'static,
     E: 'static,
@@ -519,31 +527,68 @@ pub fn spawn_checked_with_priority<
     future: F,
     priority: Priority,
 ) -> task::Handle<Result<T, E>> {
-    spawn_with_priority(
-        async move {
-            future
-                .await
-                .inspect_err(|_| unsafe { shutdown_executor_unchecked() })
-        },
-        priority,
-    )
+    Builder::new(future).priority(priority).spawn_checked()
 }
 
 /**
  * Spawn a task on the thread local executor with normal priority.
  */
+#[track_caller]
 pub fn spawn<F: Future + 'static>(future: F) -> task::Handle<F::Output> {
-    exec(|e| e.spawn(future, Priority::Normal))
+    Builder::new(future).spawn()
 }
 
 /**
  * Spawn a task on the thread local executor with [`Priority`] priority.
  */
+#[track_caller]
 pub fn spawn_with_priority<F: Future + 'static>(
     future: F,
     priority: Priority,
 ) -> task::Handle<F::Output> {
-    exec(|e| e.spawn(future, priority))
+    Builder::new(future).priority(priority).spawn()
+}
+
+impl<T: 'static, E: 'static, F: Future<Output = Result<T, E>> + 'static> Builder<F> {
+    /// Spawn a task on the thread local executor that will stop the executor if
+    /// it returns [`Err`].
+    pub fn spawn_checked(self) -> task::Handle<F::Output> {
+        let (future, meta, priority) = self.into_parts();
+
+        let future = async move {
+            future
+                .await
+                .inspect_err(|_| unsafe { shutdown_executor_unchecked() })
+        };
+        exec(|e| e.spawn(future, priority, meta))
+    }
+}
+
+impl<F: Future + 'static> Builder<F> {
+    /// Spawn a task on the thread local executor.
+    pub fn spawn(self) -> task::Handle<F::Output> {
+        let (future, meta, priority) = self.into_parts();
+
+        exec(|e| e.spawn(future, priority, meta))
+    }
+
+    fn into_parts(self) -> (F, task::Metadata, Priority) {
+        let Self {
+            future,
+            priority,
+            spawn_location,
+            name,
+        } = self;
+
+        let meta = task::Metadata {
+            spawn_location,
+            priority,
+            spawn_checked: true,
+            name: name.unwrap_or_default(),
+        };
+
+        (future, meta, priority)
+    }
 }
 
 fn run_task(t: TaskRef) {
