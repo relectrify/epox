@@ -1,4 +1,7 @@
-use crate::executor::{TaskRef, exec};
+use crate::{
+    Priority,
+    executor::{TaskRef, exec},
+};
 use pin_project_lite::pin_project;
 use std::{
     any::Any,
@@ -114,6 +117,11 @@ impl<T: 'static> Handle<T> {
     pub fn abort(&self) {
         exec(|e| e.abort(self.taskref.clone()));
     }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        self.taskref.name()
+    }
 }
 
 impl<T: 'static> Future for Handle<T> {
@@ -167,4 +175,48 @@ impl Future for YieldFuture {
  */
 pub async fn yield_now() {
     YieldFuture::new().await;
+}
+
+/// Configures and creates a task.
+#[must_use = "task must be spawned with .spawn() or .spawn_checked()"]
+pub struct Builder<F: Future + 'static> {
+    pub(crate) future: F,
+    pub(crate) priority: Priority,
+    pub(crate) spawn_location: &'static std::panic::Location<'static>,
+    pub(crate) name: Option<std::borrow::Cow<'static, str>>,
+}
+
+impl<F: Future + 'static> Builder<F> {
+    #[track_caller]
+    pub const fn new(future: F) -> Self {
+        let spawn_location = std::panic::Location::caller();
+        Self {
+            future,
+            priority: Priority::Normal,
+            spawn_location,
+            name: None,
+        }
+    }
+
+    /// Set task priority.
+    pub const fn priority(mut self, priority: Priority) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    /// Set task name.
+    ///
+    /// This can be retrieved with [`Handle::name`], and is exposed in the
+    /// tracing events when the `tracing` feature is enabled.
+    pub fn name(mut self, name: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+}
+
+pub(crate) struct Metadata {
+    pub(crate) spawn_location: &'static std::panic::Location<'static>,
+    pub(crate) priority: crate::Priority,
+    pub(crate) spawn_checked: bool,
+    pub(crate) name: std::borrow::Cow<'static, str>,
 }
