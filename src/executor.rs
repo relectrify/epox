@@ -64,6 +64,12 @@ pub(crate) struct ExecutorTask {
 }
 pub(crate) type TaskRef = Pin<Arc<ExecutorTask>>;
 
+impl Drop for ExecutorTask {
+    fn drop(&mut self) {
+        tracing::info!("dropping task '{}'", self.name);
+    }
+}
+
 impl Queueable for ExecutorTask {
     fn with_entry<R, F: FnMut(Pin<&mut QueueEntry>) -> R>(self: &Pin<Arc<Self>>, mut f: F) -> R {
         /* safety: self is pinned therefore queue_entry is pinned */
@@ -169,6 +175,7 @@ impl Executor {
         priority: Priority,
         metadata: task::TaskMetadata,
     ) -> crate::task::Handle<F::Output> {
+        tracing::info!("spawning task '{}'", metadata.name);
         let task = Arc::new_cyclic(|me: &Weak<ExecutorTask>| {
             #[cfg(feature = "tracing")]
             let (tracing_span, future) =
