@@ -1,3 +1,9 @@
+0.2.4
+=====
+
+- Add `TaskBuilder`.
+- Add `tracing` feature for [tokio console](https://github.com/tokio-rs/console/) compatible tracing.
+
 0.2.3
 =====
 
