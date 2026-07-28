@@ -1,6 +1,6 @@
 use crate::{
     EpollFlags,
-    executor::{EpollWaker, exec},
+    executor::{EpollWaker, exec, try_exec},
 };
 use nix::fcntl::{FcntlArg, OFlag, fcntl};
 use std::{
@@ -119,7 +119,10 @@ impl<T: AsRawFd> Drop for Fd<T> {
         // ignore errors - if we're being dropped after the epoll fd has closed this
         // will fail
         // this is expected and will happen after Executor::shutdown() is called
-        let _ = exec(|e| e.epoll_del(fd));
+        // we also don't care if the executor itself is unavailable (during or after
+        // destruction); this will happen when the executor drops and its queues contain
+        // a task with an Fd.
+        let _ = try_exec(|e| e.epoll_del(fd));
     }
 }
 

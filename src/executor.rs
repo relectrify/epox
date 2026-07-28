@@ -32,6 +32,14 @@ pub(crate) fn exec<R, F: FnOnce(Pin<&mut Executor>) -> R>(f: F) -> R {
     EXECUTOR.with_borrow_mut(|e| f(e.as_mut()))
 }
 
+/**
+ * Do something with the thread local executor, returning `None` during or
+ * after its destruction.
+ */
+pub(crate) fn try_exec<R, F: FnOnce(Pin<&mut Executor>) -> R>(f: F) -> Option<R> {
+    EXECUTOR.try_with(|cell| f(cell.borrow_mut().as_mut())).ok()
+}
+
 /*
  * The thing the executor uses to hold on to a task.
  *
