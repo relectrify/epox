@@ -1,3 +1,8 @@
+0.2.5
+=====
+
+- Fix for `Fd` drop implementation causing a panic while executor is dropping.
+
 0.2.4
 =====
 
