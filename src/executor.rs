@@ -852,9 +852,9 @@ pub struct Shutdown {
 }
 
 impl Future for Shutdown {
-    #[cfg(feature = "nightly")]
+    #[cfg(any(feature = "nightly", never_type_stable))]
     type Output = !;
-    #[cfg(not(feature = "nightly"))]
+    #[cfg(not(any(feature = "nightly", never_type_stable)))]
     type Output = std::convert::Infallible;
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
