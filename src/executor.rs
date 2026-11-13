@@ -852,9 +852,12 @@ pub struct Shutdown {
 }
 
 impl Future for Shutdown {
-    #[cfg(feature = "nightly")]
+    // Infallible is _not_ an alias for the never type for nightly toolchains
+    // before the never type was stabilised. So we still use ! explicitly on
+    // toolchains where Infallible =/= !
+    #[cfg(all(feature = "nightly", not(never_type_stable)))]
     type Output = !;
-    #[cfg(not(feature = "nightly"))]
+    #[cfg(not(all(feature = "nightly", not(never_type_stable))))]
     type Output = std::convert::Infallible;
 
     fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {

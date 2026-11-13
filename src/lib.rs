@@ -1,7 +1,7 @@
 //! # Features
 //!
 //! `nightly`: enable features that require a nightly toolchain
-#![cfg_attr(feature = "nightly", feature(never_type))]
+#![cfg_attr(all(feature = "nightly", not(never_type_stable)), feature(never_type))]
 
 pub mod signal;
 pub mod thread;
