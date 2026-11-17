@@ -35,8 +35,8 @@ futures-lite = "2"
 serialport = "4"
 
 [lints.rust]
-unreachable-pub = "warn"
-unnameable-types = "warn"
+unreachable_pub = "warn"
+unnameable_types = "warn"
 
 [lints.clippy]
 nursery = "warn"
